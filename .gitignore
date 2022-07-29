@@ -22,6 +22,7 @@ var/
 wheels/
 pip-wheel-metadata/
 share/python-wheels/
+.vscode/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -127,3 +128,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# old folder kept in case of debugging
+old/
