@@ -550,8 +550,10 @@ class ESN:
         rng = default_rng(seed)
 
         # Create the adjacency matrix A.
+        def rvs(size):
+            return rng.uniform(low=-1, high=1, size=size)
         A = sparse.random(size, size, density=connections/size,
-                          random_state=rng)
+                          random_state=rng, data_rvs=rvs)
         v0 = rng.random(size)
         eigenvalues, _ = splinalg.eigs(A, k=1, v0=v0)
         A *= spectral_radius/np.abs(eigenvalues[0])
