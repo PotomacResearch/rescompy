@@ -32,7 +32,7 @@ from .utils import utils
 
 
 @numba.jit(nopython=True, fastmath=True)
-def _gram_schmidt(vectors):
+def _gram_schmidt(vectors: np.ndarray):
     basis = np.zeros(vectors.shape)
     for i in range(vectors.shape[0]):
         v = vectors[i]
@@ -43,18 +43,51 @@ def _gram_schmidt(vectors):
         basis[i] = w/np.linalg.norm(w)
     return basis
 
+
+@numba.jit(nopython=True, fastmath=True)
+def _get_lyapunov_spectrum(
+    f:              Callable,
+    x0:             np.ndarray,
+    d0:             np.ndarray,
+    num_exponents:  int,
+    initial_pert:   float,
+    num_iterations: int,
+    ):
+    
+    x = np.copy(x0)
+    d = np.copy(d0)
+    
+    lambdas = np.zeros((num_exponents, num_iterations))
+    for i in range(num_iterations):
+        d = _gram_schmidt(d)
+        d *= initial_pert
+        x_n = f(x)
+        for e in range(num_exponents):
+            x_i = f(x + d[e])
+            d[e] = x_i - x_n
+            lambdas[e, i] = np.linalg.norm(x_i - x_n)/initial_pert - 1
+        x = x_n
+        
+    return np.mean(lambdas, axis=1)
+
+
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def lyapunov_spectrum(
     esn:            rescompy.ESN,
     train_result:   rescompy.TrainResult,
     num_exponents:  int                   = 1,
     initial_pert:   float                 = 1e-9,
-    tolerance:      float                 = 1e-6,
-    tau:            float                 = 1,
-    max_iterations: int                   = 10000,
+    num_iterations: int                   = 10000,
     ):
+    
+    # TODO: docstring
+    # TODO: comments
+    # TODO: range validation
+    # TODO: testing
+    # NOTE: assumes all of the inputs are mapped as feedback (default mapper)
+    # NOTE: this also means no input is assumed.
         
-    u = np.zeros((tau, esn.input_dimension))
+    u = np.zeros((1, esn.input_dimension))
     feature = train_result.feature_function
     @numba.jit(nopython=True, fastmath=True)
     def mapper(inputs, outputs):
@@ -67,133 +100,25 @@ def lyapunov_spectrum(
     C = esn.C
     W = train_result.weights
     leakage = esn.leaking_rate
-    
-    lambdas = []
-    states0 = [train_result.states[-1]]
-    perturbations = np.random.normal(size=(num_exponents,
-                                           esn.size))
-    
-    states_pert_all = np.zeros((max_iterations, num_exponents+1,
-                                tau+1, esn.size))
-    error = tolerance
-    iterations = 0
-    while error >= tolerance and iterations < max_iterations:
-        iterations += 1
-        perturbations = _gram_schmidt(perturbations)
-        perturbations *= initial_pert
-        
-        
-        r = states0[-1]
-        v = feature(r, None) @ W
-        r = r[None].repeat(tau+1, axis=0)
-        v = v[None].repeat(tau+1, axis=0)
-        states0, _ = rescompy._get_states_autonomous_jit(u, v, r, feature,
-                                                     mapper, A_data,
-                                                     A_indices,
-                                                     A_indptr, A_shape,
-                                                     B, C, W, leakage)
-        statespert = np.zeros((num_exponents, tau, esn.size))
-        for i in range(num_exponents):
-           
-            r = r[0] + perturbations[i]
-            v = feature(r, None) @ W
-            r = r[None].repeat(tau+1, axis=0)
-            v = v[None].repeat(tau+1, axis=0)
-            statespert[i], _ = rescompy._get_states_autonomous_jit(u, v, r, feature,
-                                                         mapper, A_data,
-                                                         A_indices,
-                                                         A_indptr, A_shape,
-                                                         B, C, W, leakage)
-            states_pert_all[iterations-1, i+1, 0] = r[0]
-        states_pert_all[iterations-1, 0, 0] = r[0] - perturbations[i]
-        states_pert_all[iterations-1, 0, 1:] = states0
-        states_pert_all[iterations-1, 1:, 1:] = statespert
-        lambdas_i = np.zeros((num_exponents))
-        for i in range(num_exponents):
-            lambdas_i[i] = np.log(np.linalg.norm(states0[-1]
-                                                 - statespert[i, -1]))
-            lambdas_i[i] += -np.log(np.linalg.norm(perturbations[i]))
-            lambdas_i[i] *= 1/(tau-1)
-        lambdas.append(lambdas_i)
- 
-@validate_arguments(config=dict(arbitrary_types_allowed=True))
-def lyapunov_spectrum_old(
-    esn:              rescompy.ESN,
-    train_result:     Union[rescompy.TrainResult, np.ndarray],
-    ):
-        
-    feature = train_result.feature_function
-    @numba.jit(nopython=True, fastmath=True)
-    def mapper(inputs, outputs):
-        return outputs
-    A_data = esn.A.data
-    A_indices = esn.A.indices
-    A_indptr = esn.A.indptr
-    A_shape = esn.A.shape
-    B = esn.B
-    C = esn.C
-    W = train_result.weights
-    leakage = esn.leaking_rate
-    
-    lambda1 = np.zeros((integration_length))
-    z = np.zeros((integration_length))
-    z0 = np.random.normal(size=(esn.size))
-    z0 *= initial_pert/np.sqrt(np.mean(np.square(z0)))
-    for i in range(integration_length-1):
-        z[i+1] = z[i] + 0.
+    res_dim, output_dim = W.shape
 
-@numba.jit(nopython=True, fastmath=True)
-def _calculate_perturbation(
-    feature:        Callable,
-    mapper:         Callable,
-    A_data:         np.ndarray,
-    A_indices:      np.ndarray,
-    A_indptr:       np.ndarray,
-    A_shape:        tuple,
-    B:              np.ndarray,
-    C:              np.ndarray,
-    W:              np.ndarray,
-    leakage:        float,
-    state0:         np.ndarray,
-    max_iterations: int,
-    perturbation:   np.ndarray,
-    initial_pert:   float,
-    x:              int,
-    ):
+    @numba.jit(nopython=True, fastmath=True)
+    def f(x):
+        v = np.zeros((2, output_dim))
+        r = np.zeros((2, res_dim))
+        
+        v[0] = feature(x, None) @ W
+        r[0] = x
+        states0, _ = rescompy._get_states_autonomous_jit(u, v, r,
+                         feature, mapper, A_data, A_indices, A_indptr,
+                         A_shape, B, C, W, leakage)
+        return states0[-1]
     
-    d = np.zeros((max_iterations), dtype=np.float64)
-    u = np.zeros((x, 1), dtype=np.float64)
-    states0 = np.zeros((x, A_shape[0]), dtype=np.float64)
-    states0[-1] = state0
-    for iteration in range(max_iterations):
-        perturbation *= initial_pert/np.sqrt(np.mean(np.square(
-                                             perturbation)))
-        
-        r = np.zeros((x, A_shape[0]), dtype=np.float64)
-        r[0] = states0[-1]
-        v = np.zeros((x, W.shape[1]))
-        v[0] = feature(r[0], None) @ W
-        
-        states0, _ = rescompy._get_states_autonomous_jit(u, v, r, feature,
-                                                     mapper, A_data,
-                                                     A_indices,
-                                                     A_indptr, A_shape,
-                                                     B, C, W, leakage)
-        r = np.zeros((x, A_shape[0]), dtype=np.float64) + perturbation
-        r[0] = states0[-1]
-        v = np.zeros((x, W.shape[1]))
-        v[0] = feature(r[0], None) @ W
-        states1, _ = rescompy._get_states_autonomous_jit(u, v, r, feature,
-                                                     mapper, A_data,
-                                                     A_indices,
-                                                     A_indptr, A_shape,
-                                                     B, C, W, leakage)
-        d[iteration] = np.log(np.sqrt(np.mean(np.square(states0[-1]
-                       - states1[-1])))) - np.log(initial_pert)
-        
-        d[iteration] *= 1/x
-        
-    return 1/np.mean(d)
+    x0 = train_result.states[-1]
+    d0 = np.random.normal(size=(num_exponents, res_dim))
+    
+    return _get_lyapunov_spectrum(f, x0, d0, num_exponents,
+                                  initial_pert, num_iterations)
 
 
 @numba.jit(nopython=True, fastmath=True)
