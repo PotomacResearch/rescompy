@@ -3,7 +3,7 @@ import rescompy
 
 # Fix a seed and set some experimental parameters.
 seed = 14
-size = 200
+size = 500
 transient_length = 10000
 train_length = 50000
 validation_length = 100

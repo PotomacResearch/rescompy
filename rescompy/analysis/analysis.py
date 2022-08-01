@@ -68,7 +68,7 @@ def _get_lyapunov_spectrum(
             lambdas[e, i] = np.linalg.norm(x_i - x_n)/initial_pert - 1
         x = x_n
         
-    return np.mean(lambdas, axis=1)
+    return lambdas
 
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
@@ -117,8 +117,10 @@ def lyapunov_spectrum(
     x0 = train_result.states[-1]
     d0 = np.random.normal(size=(num_exponents, res_dim))
     
-    return _get_lyapunov_spectrum(f, x0, d0, num_exponents,
-                                  initial_pert, num_iterations)
+    lambdas = _get_lyapunov_spectrum(f, x0, d0, num_exponents,
+                                     initial_pert, num_iterations)
+    
+    return np.mean(lambdas, axis=1)
 
 
 @numba.jit(nopython=True, fastmath=True)
