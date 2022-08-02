@@ -1,9 +1,8 @@
-"""rescompy.py
+"""respy.py
 
-The main module for rescompy.
+The Reservoir Computing module.
 
-Contains basic function and class definitions for manipulation, training, and
-forecasting with reservoir computers.
+This module contains classes for fundamental handling of Echo-State Networks.
 """
 
 
@@ -16,6 +15,7 @@ __version__ = '1.0.0'
 import pickle
 import logging
 import numba
+import numba.extending 
 import warnings
 import numpy as np
 import scipy.stats
@@ -28,9 +28,9 @@ from numpy.random._generator import Generator
 from numba.core.errors import NumbaPerformanceWarning
 from tabulate import tabulate
 from pydantic import validate_arguments
-from .utils import utils
-from .features import features
-from .regressions import regressions
+import utils
+import features
+import regressions
 
 
 # Ignore unhelpful numba performance warnings.
@@ -473,7 +473,7 @@ class PredictResult:
 class ESN:
     """The Echo-State Network class.
 
-    The main class of the rescompy module.
+    The main class of the respy module.
     
     This class represents an echo-state network instance and contains methods
     for analyzing, training, predicting, etc.
@@ -550,10 +550,8 @@ class ESN:
         rng = default_rng(seed)
 
         # Create the adjacency matrix A.
-        def rvs(size):
-            return rng.uniform(low=-1, high=1, size=size)
         A = sparse.random(size, size, density=connections/size,
-                          random_state=rng, data_rvs=rvs)
+                          random_state=rng)
         v0 = rng.random(size)
         eigenvalues, _ = splinalg.eigs(A, k=1, v0=v0)
         A *= spectral_radius/np.abs(eigenvalues[0])
@@ -664,7 +662,7 @@ class ESN:
                     except:
                         return False
                 elif isinstance(values_self[value],
-                                scipy.sparse.csr_matrix):
+                                scipy.sparse.csr.csr_matrix):
                     try:
                         equal *= np.allclose(values_self[
                                              value].toarray(),
@@ -1025,28 +1023,29 @@ class ESN:
         # Attempt to use the compiled version.
         # This will fail if train_result.feature_function is not compiled with
         # a numba.jit decorator.
-        try:
-            # Propagate the reservoir autonomously.
+        use_jit = numba.extending.is_jitted(feature_function) and \
+            numba.extending.is_jitted(mapper)
+        if use_jit:
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
                               states, feature_function,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
-
-        except:            
-            msg = "Could not compile the autonomous state " \
-                      "propagation function. Trying a non-compiled " \
-                      "version instead."
+        else:
+            msg = "Using non-compiled autonomous state " \
+                      "propagation function. "\
+                      "Use numba.jit() for feature_function "\
+                      " and mapper to improve performance."
             logging.warning(msg)
             states, outputs = _get_states_autonomous(inputs, outputs,
                               states, feature_function,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
+
+        states = states
+        outputs = outputs
+
         
         # Calculate the outputs
         if resync_signal is None:
@@ -1071,9 +1070,8 @@ def optimize_hyperparameters(
     ):
     """The Optimize Hyperparameters function.
     
-    Takes an existing rescompy.ESN object and optimizes several
-    hyperparameters, minimizing the prediction error for a given task or sets
-    of tasks.
+    Takes an existing respy.ESN object and optimizes several hyperparameters,
+    minimizing the prediction error for a given task or sets of tasks.
     
     Args:
         esn (ESN): The unoptimized ESN object.
@@ -1201,9 +1199,9 @@ def copy(
     esn:      ESN,
     new_seed: Optional[int] = None
     ) -> ESN:
-    """The rescompy Copy function.
+    """The respy Copy function.
     
-    Takes an existing rescompy.ESN object and returns a shallow copy.
+    Takes an existing respy.ESN object and returns a shallow copy.
     
     If a new seed is provided, will copy only the hyperparameters and generate
     a new ESN accordingly.
@@ -1314,62 +1312,6 @@ def _get_states_driven(
             + C)
     return r[1:]
 
-
-@numba.jit(nopython=True, fastmath=True)
-def _get_states_autonomous_jit(
-    u:         np.ndarray,
-    v:         np.ndarray,
-    r:         np.ndarray,
-    feature:   Callable,
-    mapper:    Callable,
-    A_data:    np.ndarray,
-    A_indices: np.ndarray,
-    A_indptr:  np.ndarray,
-    A_shape:   tuple,
-    B:         np.ndarray,
-    C:         np.ndarray,
-    W:         np.ndarray,
-    leakage:   float,
-    ) -> np.ndarray:
-    """The compiled Get Autonomous States function.
-    
-    A compiled function for quick computation of reservoir states in closed-
-    loop mode.
-    
-    This function is intended for internal use and does not provide type- or
-    shape-checking.
-    
-    Args:
-        u (np.ndarray): Reservoir inputs.
-        v (np.ndarray): Reservoir outputs.
-        r (np.ndarray): Reservoir states.
-        feature (Callable): The feature function.
-        mapper (Callable): A function defining the feedback.
-        A_data (np.ndarray): CSR format data array of the adjacency matrix A.
-        A_indices (np.ndarray): CSR format index array of the adjacency matrix
-                                A.
-        A_indptr (np.ndarray): CSR format index pointer array of the adjacency
-                               matrix A.
-        A_shape (np.ndarray): The shape of the adjacency matrix A.
-        B (np.ndarray): The input matrix.
-        C (np.ndarray): The bias vector.
-        W (np.ndarray): The output weights.
-        leakage (float): The leaking rate.
-    
-    Returns:
-        r (np.ndarray): The computed reservoir states.
-    """    
-
-    for i in range(r.shape[0]-1):
-        feedback = mapper(u[i], v[i])
-        r[i+1] = (1.0-leakage)*r[i] + leakage*np.tanh(
-            B @ feedback
-            + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
-            + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
-    return r[1:], v[1:]
-
-
 def _get_states_autonomous(
     u:         np.ndarray,
     v:         np.ndarray,
@@ -1419,5 +1361,7 @@ def _get_states_autonomous(
             B @ feedback
             + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
             + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
+        v[i+1] = feature(np.reshape(r[i+1], (1,-1)), np.reshape(feedback, (1, -1))) @ W
     return r[1:], v[1:]
+
+_get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
