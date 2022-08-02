@@ -1,8 +1,9 @@
-"""respy.py
+"""rescompy.py
 
-The Reservoir Computing module.
+The main module for rescompy.
 
-This module contains classes for fundamental handling of Echo-State Networks.
+Contains basic function and class definitions for manipulation, training, and
+forecasting with reservoir computers.
 """
 
 
@@ -15,7 +16,6 @@ __version__ = '1.0.0'
 import pickle
 import logging
 import numba
-import numba.extending 
 import warnings
 import numpy as np
 import scipy.stats
@@ -28,9 +28,9 @@ from numpy.random._generator import Generator
 from numba.core.errors import NumbaPerformanceWarning
 from tabulate import tabulate
 from pydantic import validate_arguments
-import utils
-import features
-import regressions
+from .utils import utils
+from .features import features
+from .regressions import regressions
 
 
 # Ignore unhelpful numba performance warnings.
@@ -473,7 +473,7 @@ class PredictResult:
 class ESN:
     """The Echo-State Network class.
 
-    The main class of the respy module.
+    The main class of the rescompy module.
     
     This class represents an echo-state network instance and contains methods
     for analyzing, training, predicting, etc.
@@ -550,8 +550,10 @@ class ESN:
         rng = default_rng(seed)
 
         # Create the adjacency matrix A.
+        def rvs(size):
+            return rng.uniform(low=-1, high=1, size=size)
         A = sparse.random(size, size, density=connections/size,
-                          random_state=rng)
+                          random_state=rng, data_rvs=rvs)
         v0 = rng.random(size)
         eigenvalues, _ = splinalg.eigs(A, k=1, v0=v0)
         A *= spectral_radius/np.abs(eigenvalues[0])
@@ -662,7 +664,7 @@ class ESN:
                     except:
                         return False
                 elif isinstance(values_self[value],
-                                scipy.sparse.csr.csr_matrix):
+                                scipy.sparse.csr_matrix):
                     try:
                         equal *= np.allclose(values_self[
                                              value].toarray(),
@@ -1023,29 +1025,28 @@ class ESN:
         # Attempt to use the compiled version.
         # This will fail if train_result.feature_function is not compiled with
         # a numba.jit decorator.
-        use_jit = numba.extending.is_jitted(feature_function) and \
-            numba.extending.is_jitted(mapper)
-        if use_jit:
+        try:
+            # Propagate the reservoir autonomously.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
                               states, feature_function,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-        else:
-            msg = "Using non-compiled autonomous state " \
-                      "propagation function. "\
-                      "Use numba.jit() for feature_function "\
-                      " and mapper to improve performance."
+            states = states
+            outputs = outputs
+
+        except:            
+            msg = "Could not compile the autonomous state " \
+                      "propagation function. Trying a non-compiled " \
+                      "version instead."
             logging.warning(msg)
             states, outputs = _get_states_autonomous(inputs, outputs,
                               states, feature_function,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-
-        states = states
-        outputs = outputs
-
+            states = states
+            outputs = outputs
         
         # Calculate the outputs
         if resync_signal is None:
@@ -1070,8 +1071,9 @@ def optimize_hyperparameters(
     ):
     """The Optimize Hyperparameters function.
     
-    Takes an existing respy.ESN object and optimizes several hyperparameters,
-    minimizing the prediction error for a given task or sets of tasks.
+    Takes an existing rescompy.ESN object and optimizes several
+    hyperparameters, minimizing the prediction error for a given task or sets
+    of tasks.
     
     Args:
         esn (ESN): The unoptimized ESN object.
@@ -1199,9 +1201,9 @@ def copy(
     esn:      ESN,
     new_seed: Optional[int] = None
     ) -> ESN:
-    """The respy Copy function.
+    """The rescompy Copy function.
     
-    Takes an existing respy.ESN object and returns a shallow copy.
+    Takes an existing rescompy.ESN object and returns a shallow copy.
     
     If a new seed is provided, will copy only the hyperparameters and generate
     a new ESN accordingly.
@@ -1311,6 +1313,7 @@ def _get_states_driven(
             + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
             + C)
     return r[1:]
+
 
 def _get_states_autonomous(
     u:         np.ndarray,
