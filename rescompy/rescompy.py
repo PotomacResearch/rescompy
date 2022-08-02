@@ -1022,20 +1022,33 @@ class ESN:
             def mapper(inputs, outputs):
                 return outputs
         
-        # Attempt to use the compiled version.
-        # This will fail if train_result.feature_function is not compiled with
-        # a numba.jit decorator.
-        try:
-            # Propagate the reservoir autonomously.
+        # Try first to use the jitted version of _get_states_autonomous for
+        # faster performance.
+        try: 
+            
+            # If function is not jitted, attempt to jit it and verify it works.
+            if not hasattr(feature_function, 'inspect_llvm'):
+                feature_function_jit = numba.jit(nopython=True,
+                                           fastmath=True)(feature_function)
+                _ = feature_function_jit(states, inputs)
+                msg = "Successfully compiled feature_function."
+                logging.info(msg)
+                
+            # Otherwise, grab the already jitted function.
+            else:
+                feature_function_jit = feature_function
+                            
+            # If successful, calculate states and outputs using the compiled
+            # state propagation function.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
-                              states, feature_function,
+                              states, feature_function_jit,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
-
-        except:            
+            
+        # If function is not jittable or for some other reason does not run
+        # with the jitted _get_states_autonomous, 
+        except:
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
