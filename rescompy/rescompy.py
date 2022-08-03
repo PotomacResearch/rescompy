@@ -970,37 +970,53 @@ class ESN:
                               "to infer predict_length."
                         logging.warning(msg)
 
-        # If no initial state is provided, use the end of the training result.
-        if initial_state is None and resync_signal is None:
-            if isinstance(train_result, TrainResult):
-                initial_state = train_result.states[-1][None]
-                initial_input = train_result.inputs[-1][None]
-            else:
-                if initial_state is None:
-                    msg = "Must provide a TrainResult object for " \
-                          "train_result, or provide an " \
-                          "initial_state, or provide a resync_signal."
-                    logging.error(msg)
-                    
-        # If a resync signal is given, reset to all zero state and drive it
-        # with the resync signal to calculate the initial state.
-        elif initial_state is None and resync_signal is not None:
-            resync_states = self._get_states(np.zeros(self.size),
-                                             resync_signal)
-            # If an initial was provided, raise a warning that it will be
-            # ignored.
-            if initial_state is None:
+        # If resync signal is provided, use to calculate initial state and
+        # initial input.
+        if resync_signal is not None:
+            
+            # If initial_input was also explicitly provided, raise warning that
+            # it will be ignored.
+            if initial_state is not None:
                 msg = "Both initial_state and resync_signal are " \
                       "provided; initial_state will be calculated " \
                       "from resync_signal and the provided " \
                       "initial_state will be ignored."
                 logging.warning(msg)
+                
+            resync_states = self._get_states(np.zeros(self.size),
+                                             resync_signal)
             initial_state = resync_states[-1][None]
             initial_input = resync_signal[-1][None]
+
+        else:
             
-        if initial_state is not None and not \
-            isinstance(train_result, TrainResult):
-            initial_input = np.zeros((1, self.input_dimension))
+            # Next, prioritize using a provided initial state.
+            # We assume in this case that no initial input is needed, but log
+            # this info for later debugging.
+            # This will only cause an issue if the feature function needs an
+            # input.
+            if initial_state is not None:
+                initial_input = np.zeros((1, self.input_dimension))
+                msg = "No way of calculating initial_input is " \
+                      "provided; this may cause problems if " \
+                      "feature_function requires an input."
+                logging.info(msg)
+            
+            else:
+                
+                # Finally, if neither is provided, attempt to use the
+                # TrainResult object.
+                if isinstance(train_result, TrainResult):
+                    initial_state = train_result.states[-1][None]
+                    initial_input = train_result.inputs[-1][None]
+                    
+                # If we get here, there was not enough information to calculate
+                # an initial state and we must raise an error.
+                else:
+                    msg = "Must provide a TrainResult object for " \
+                          "train_result, or provide an " \
+                          "initial_state, or provide a resync_signal."
+                    logging.error(msg)
                         
         # If inputs aren't provided, just allocate space for them.
         if inputs is None:
