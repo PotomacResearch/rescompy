@@ -37,6 +37,11 @@ from .regressions import regressions
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 
 
+@numba.jit(nopython=True, fastmath=True)
+def default_mapper(inputs, outputs):
+    return outputs
+
+
 class Standardizer:
     """The Standardizer class.
     
@@ -883,7 +888,7 @@ class ESN:
         target_outputs:   Optional[np.ndarray] = None,
         initial_state:    Optional[np.ndarray] = None,
         resync_signal:    Optional[np.ndarray] = None,
-        mapper:           Optional[Callable]   = None,
+        mapper:           Optional[Callable]   = default_mapper,
         feature_function: Optional[Callable]   = None,
         ) -> PredictResult:
         """The prediction method.
