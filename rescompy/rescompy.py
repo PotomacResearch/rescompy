@@ -1035,14 +1035,23 @@ class ESN:
             if not hasattr(feature_function, 'inspect_llvm'):
                 feature_function_jit = numba.jit(nopython=True,
                                            fastmath=True)(feature_function)
-                _ = feature_function_jit(states, inputs)
+                _ = feature_function_jit(states[:predict_length], inputs)
                 msg = "Successfully compiled feature_function."
                 logging.info(msg)
                 
             # Otherwise, grab the already jitted function.
             else:
                 feature_function_jit = feature_function
-                            
+                                        
+            # For speed and successful jitting in certain cases, ensure that
+            # the data arrays are contiguous.
+            if not inputs.data.contiguous:
+                inputs = np.ascontiguousarray(inputs)
+            if not outputs.data.contiguous:
+                outputs = np.ascontiguousarray(outputs)
+            if not states.data.contiguous:
+                states = np.ascontiguousarray(states)
+            
             # If successful, calculate states and outputs using the compiled
             # state propagation function.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
