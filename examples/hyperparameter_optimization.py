@@ -3,13 +3,16 @@ import rescompy
 
 # Fix a seed and set some experimental parameters.
 seed = 14
-size = 200
+size = 1000
+connections = 10
+spectral_radius = 0.99
+input_strength = 1.0
+bias_strength = 0.5
+leaking_rate = 0.1
 transient_length = 10000
 train_length = 50000
 validation_length = 100
 test_length = 5000
-leaking_rate = 0.1
-bias_strength = 0.5
 
 # Create and normalize a long Lorenz signal.
 u = rescompy.benchmarks.get_lorenz(seed=seed, return_length=train_length
