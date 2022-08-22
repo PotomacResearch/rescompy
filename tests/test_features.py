@@ -19,24 +19,8 @@ SEED = 17
 
 class TestStatesOnly(unittest.TestCase):
     """Test the features.states_only function."""
-    
-    def test_vector(self):
-        """Test the function on vector data."""
-        
-        # Create the random state for reproducibility.
-        rng = default_rng(SEED)
-        
-        # Create some dummy data.
-        r = rng.uniform(size=(10))
-        u = rng.uniform(size=(3))
-        
-        # Grab the feature vectors.
-        s = features.states_only(r, u)
-        
-        # Compare to expected results.
-        assert_equal(s, r)
-        
-    def test_matrix(self):
+            
+    def test(self):
         """Test the function on vector data."""
 
         # Create the random state for reproducibility.
@@ -55,26 +39,8 @@ class TestStatesOnly(unittest.TestCase):
 
 class TestStatesAndInputs(unittest.TestCase):
     """Test the features.states_and_inputs function."""
-    
-    def test_vector(self):
-        """Test the function on vector data."""
         
-        # Create the random state for reproducibility.
-        rng = default_rng(SEED)
-        
-        # Create some dummy data.
-        r = rng.uniform(size=(10))
-        u = rng.uniform(size=(3))
-        
-        # Grab the feature vectors.
-        s = features.states_and_inputs(r, u)
-        
-        # Compare to expected results.
-        self.assertEqual(s.shape, (13,))
-        assert_equal(s[:10], r)
-        assert_equal(s[10:], u)
-        
-    def test_matrix(self):
+    def test(self):
         """Test the function on vector data."""
         
         # Create the random state for reproducibility.
@@ -96,25 +62,7 @@ class TestStatesAndInputs(unittest.TestCase):
 class TestStatesAndConstant(unittest.TestCase):
     """Test the features.states_and_constant function."""
     
-    def test_vector(self):
-        """Test the function on vector data."""
-        
-        # Create the random state for reproducibility.
-        rng = default_rng(SEED)
-        
-        # Create some dummy data.
-        r = rng.uniform(size=(10))
-        u = rng.uniform(size=(3))
-        
-        # Grab the feature vectors.
-        s = features.states_and_constant(r, u)
-        
-        # Compare to expected results.
-        self.assertEqual(s.shape, (11,))
-        assert_equal(s[:10], r)
-        assert_equal(s[10], 1)
-        
-    def test_matrix(self):
+    def test(self):
         """Test the function on vector data."""
 
         # Create the random state for reproducibility.
@@ -135,27 +83,8 @@ class TestStatesAndConstant(unittest.TestCase):
 
 class TestStatesAndInputsAndConstant(unittest.TestCase):
     """Test the features.states_and_inputs_and_constant function."""
-    
-    def test_vector(self):
-        """Test the function on vector data."""
-        
-        # Create the random state for reproducibility.
-        rng = default_rng(SEED)
 
-        # Create some dummy data.        
-        r = rng.uniform(size=(10))
-        u = rng.uniform(size=(3))
-        
-        # Grab the feature vectors.
-        s = features.states_and_inputs_and_constant(r, u)
-        
-        # Compare to expected results.
-        self.assertEqual(s.shape, (14,))
-        assert_equal(s[:10], r)
-        assert_equal(s[10:13], u)
-        assert_equal(s[13], 1)
-        
-    def test_matrix(self):
+    def test(self):
         """Test the function on vector data."""
         
         # Create the random state for reproducibility.
@@ -177,27 +106,8 @@ class TestStatesAndInputsAndConstant(unittest.TestCase):
 
 class TestGetPolynomial(unittest.TestCase):
     """Test the features.get_polynomial function."""
-    
-    def test_vector_3(self):
-        """Test features.get_polynomial(3) on vector data."""
         
-        # Create the random state for reproducibility.
-        rng = default_rng(SEED)
-        
-        # Create some dummy data.
-        r = rng.uniform(size=(10))
-        u = rng.uniform(size=(3))
-        
-        # Grab the feature vectors.
-        s = features.get_polynomial(3)(r, u)
-        
-        # Compare to expected results.
-        self.assertEqual(s.shape, (30,))
-        assert_equal(s[:10], r)
-        assert_almost_equal(s[10:20], r**2)
-        assert_almost_equal(s[20:], r**3)
-        
-    def test_matrix_3(self):
+    def test_3(self):
         """Test features.get_polynomial(3) on vector data."""
         
         # Create the random state for reproducibility.

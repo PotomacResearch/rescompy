@@ -1020,20 +1020,40 @@ class ESN:
         outputs = initial_output.repeat(predict_length + 1,
                                               axis=0)
             
-        # Attempt to use the compiled version.
-        # This will fail if train_result.feature_function is not compiled with
-        # a numba.jit decorator.
-        try:
-            # Propagate the reservoir autonomously.
+        # If no mapper provided, define a default mapper where all variables
+        # are fed back as inputs.
+        if mapper is None:
+            @numba.jit(nopython=True, fastmath=True)
+            def mapper(inputs, outputs):
+                return outputs
+        
+        # Try first to use the jitted version of _get_states_autonomous for
+        # faster performance.
+        try: 
+            
+            # If function is not jitted, attempt to jit it and verify it works.
+            if not hasattr(feature_function, 'inspect_llvm'):
+                feature_function_jit = numba.jit(nopython=True,
+                                           fastmath=True)(feature_function)
+                _ = feature_function_jit(states, inputs)
+                msg = "Successfully compiled feature_function."
+                logging.info(msg)
+                
+            # Otherwise, grab the already jitted function.
+            else:
+                feature_function_jit = feature_function
+                            
+            # If successful, calculate states and outputs using the compiled
+            # state propagation function.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
-                              states, feature_function,
+                              states, feature_function_jit,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
-
-        except:            
+            
+        # If function is not jittable or for some other reason does not run
+        # with the jitted _get_states_autonomous, 
+        except TypeError:
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
@@ -1313,61 +1333,6 @@ def _get_states_driven(
     return r[1:]
 
 
-@numba.jit(nopython=True, fastmath=True)
-def _get_states_autonomous_jit(
-    u:         np.ndarray,
-    v:         np.ndarray,
-    r:         np.ndarray,
-    feature:   Callable,
-    mapper:    Callable,
-    A_data:    np.ndarray,
-    A_indices: np.ndarray,
-    A_indptr:  np.ndarray,
-    A_shape:   tuple,
-    B:         np.ndarray,
-    C:         np.ndarray,
-    W:         np.ndarray,
-    leakage:   float,
-    ) -> np.ndarray:
-    """The compiled Get Autonomous States function.
-    
-    A compiled function for quick computation of reservoir states in closed-
-    loop mode.
-    
-    This function is intended for internal use and does not provide type- or
-    shape-checking.
-    
-    Args:
-        u (np.ndarray): Reservoir inputs.
-        v (np.ndarray): Reservoir outputs.
-        r (np.ndarray): Reservoir states.
-        feature (Callable): The feature function.
-        mapper (Callable): A function defining the feedback.
-        A_data (np.ndarray): CSR format data array of the adjacency matrix A.
-        A_indices (np.ndarray): CSR format index array of the adjacency matrix
-                                A.
-        A_indptr (np.ndarray): CSR format index pointer array of the adjacency
-                               matrix A.
-        A_shape (np.ndarray): The shape of the adjacency matrix A.
-        B (np.ndarray): The input matrix.
-        C (np.ndarray): The bias vector.
-        W (np.ndarray): The output weights.
-        leakage (float): The leaking rate.
-    
-    Returns:
-        r (np.ndarray): The computed reservoir states.
-    """    
-
-    for i in range(r.shape[0]-1):
-        feedback = mapper(u[i], v[i])
-        r[i+1] = (1.0-leakage)*r[i] + leakage*np.tanh(
-            B @ feedback
-            + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
-            + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
-    return r[1:], v[1:]
-
-
 def _get_states_autonomous(
     u:         np.ndarray,
     v:         np.ndarray,
@@ -1417,5 +1382,7 @@ def _get_states_autonomous(
             B @ feedback
             + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
             + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
+        v[i+1] = feature(np.reshape(r[i+1], (1,-1)), np.reshape(feedback, (1, -1))) @ W
     return r[1:], v[1:]
+
+_get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
