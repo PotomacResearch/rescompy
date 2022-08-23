@@ -974,38 +974,50 @@ class ESN:
                               "to infer predict_length."
                         logging.warning(msg)
 
-        # If no initial state is provided, use the end of the training result.
-        if initial_state is None and resync_signal is None:
-            if isinstance(train_result, TrainResult):
-                initial_state = train_result.states[-1][None]
-                initial_input = train_result.inputs[-1][None]
-            else:
-                if initial_state is None:
-                    msg = "Must provide a TrainResult object for " \
-                          "train_result, or provide an " \
-                          "initial_state, or provide a resync_signal."
-                    logging.error(msg)
-			
         # If a resync signal is given:
-        # - if no initial state is given, reset to all zero state and drive it
-        # with the resync signal
-		# - if an initial state is given, set the reservoir to this initial
+        # - if no initial state is given, reset the reservoir to all zero state and
+        # drive it with the resync signal
+        # - if an initial state is given, set the reservoir to this initial
         # state and drive it with the resync signal.
-        elif resync_signal is not None:
+        if resync_signal is not None:
             if initial_state is None:
                 	resync_states = self._get_states(np.zeros(self.size), resync_signal)
             else:
-                resync_states = self._get_states(initial_state, resync_signal)
+                  resync_states = self._get_states(initial_state, resync_signal)
             initial_state = resync_states[-1][None]
             initial_input = resync_signal[-1][None]
             resync_outputs = feature_function(resync_states, resync_signal) @ weights
-            
-        elif initial_state is not None and not \
-            isinstance(train_result, TrainResult):
+
+        elif initial_state is not None:
+            # Next, prioritize using a provided initial state.
+            # We assume in this case that no initial input is needed, but log
+            # this info for later debugging.
+            # This will only cause an issue if the feature function needs an
+            # input.
             # Shape the initial_state if provided as a 1D array.
             if len(initial_state.shape) == 1:
 	                initial_state = initial_state[None]
             initial_input = np.zeros((1, self.input_dimension))
+            msg = "No way of calculating initial_input is " \
+                    "provided; this may cause problems if " \
+                    "feature_function requires an input."
+            logging.info(msg)
+        
+        elif isinstance(train_result, TrainResult):
+            
+            # Finally, if neither is provided, attempt to use the
+            # TrainResult object.
+            
+            initial_state = train_result.states[-1][None]
+            initial_input = train_result.inputs[-1][None]
+                
+        else:
+            # If we get here, there was not enough information to calculate
+            # an initial state and we must raise an error.
+            msg = "Must provide a TrainResult object for " \
+                    "train_result, or provide an " \
+                    "initial_state, or provide a resync_signal."
+            logging.error(msg)
                         
         # If inputs aren't provided, just allocate space for them.
         if inputs is None:
@@ -1019,21 +1031,43 @@ class ESN:
         states = initial_state.repeat(predict_length + 1, axis=0)
         outputs = initial_output.repeat(predict_length + 1,
                                               axis=0)
+        
+        # Try first to use the jitted version of _get_states_autonomous for
+        # faster performance.
+        try: 
             
-        # Attempt to use the compiled version.
-        # This will fail if train_result.feature_function is not compiled with
-        # a numba.jit decorator.
-        try:
-            # Propagate the reservoir autonomously.
+            # If function is not jitted, attempt to jit it and verify it works.
+            if not hasattr(feature_function, 'inspect_llvm'):
+                feature_function_jit = numba.jit(nopython=True,
+                                           fastmath=True)(feature_function)
+                _ = feature_function_jit(states[:predict_length], inputs)
+                msg = "Successfully compiled feature_function."
+                logging.info(msg)
+                
+            # Otherwise, grab the already jitted function.
+            else:
+                feature_function_jit = feature_function
+                                        
+            # For speed and successful jitting in certain cases, ensure that
+            # the data arrays are contiguous.
+            if not inputs.data.contiguous:
+                inputs = np.ascontiguousarray(inputs)
+            if not outputs.data.contiguous:
+                outputs = np.ascontiguousarray(outputs)
+            if not states.data.contiguous:
+                states = np.ascontiguousarray(states)
+            
+            # If successful, calculate states and outputs using the compiled
+            # state propagation function.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
-                              states, feature_function,
+                              states, feature_function_jit,
                               mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
-
-        except:            
+            
+        # If function is not jittable or for some other reason does not run
+        # with the jitted _get_states_autonomous, 
+        except TypeError:
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
@@ -1313,61 +1347,6 @@ def _get_states_driven(
     return r[1:]
 
 
-@numba.jit(nopython=True, fastmath=True)
-def _get_states_autonomous_jit(
-    u:         np.ndarray,
-    v:         np.ndarray,
-    r:         np.ndarray,
-    feature:   Callable,
-    mapper:    Callable,
-    A_data:    np.ndarray,
-    A_indices: np.ndarray,
-    A_indptr:  np.ndarray,
-    A_shape:   tuple,
-    B:         np.ndarray,
-    C:         np.ndarray,
-    W:         np.ndarray,
-    leakage:   float,
-    ) -> np.ndarray:
-    """The compiled Get Autonomous States function.
-    
-    A compiled function for quick computation of reservoir states in closed-
-    loop mode.
-    
-    This function is intended for internal use and does not provide type- or
-    shape-checking.
-    
-    Args:
-        u (np.ndarray): Reservoir inputs.
-        v (np.ndarray): Reservoir outputs.
-        r (np.ndarray): Reservoir states.
-        feature (Callable): The feature function.
-        mapper (Callable): A function defining the feedback.
-        A_data (np.ndarray): CSR format data array of the adjacency matrix A.
-        A_indices (np.ndarray): CSR format index array of the adjacency matrix
-                                A.
-        A_indptr (np.ndarray): CSR format index pointer array of the adjacency
-                               matrix A.
-        A_shape (np.ndarray): The shape of the adjacency matrix A.
-        B (np.ndarray): The input matrix.
-        C (np.ndarray): The bias vector.
-        W (np.ndarray): The output weights.
-        leakage (float): The leaking rate.
-    
-    Returns:
-        r (np.ndarray): The computed reservoir states.
-    """    
-
-    for i in range(r.shape[0]-1):
-        feedback = mapper(u[i], v[i])
-        r[i+1] = (1.0-leakage)*r[i] + leakage*np.tanh(
-            B @ feedback
-            + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
-            + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
-    return r[1:], v[1:]
-
-
 def _get_states_autonomous(
     u:         np.ndarray,
     v:         np.ndarray,
@@ -1417,5 +1396,7 @@ def _get_states_autonomous(
             B @ feedback
             + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
             + C)
-        v[i+1] = feature(r[i+1], feedback) @ W
+        v[i+1] = feature(np.reshape(r[i+1], (1,-1)), np.reshape(feedback, (1, -1))) @ W
     return r[1:], v[1:]
+
+_get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)

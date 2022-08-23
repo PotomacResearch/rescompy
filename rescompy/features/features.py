@@ -62,7 +62,7 @@ def states_and_inputs(
     return s
 
 
-#@numba.jit(nopython=True, fastmath=True)
+@numba.jit(nopython=True, fastmath=True)
 def states_and_constant(
     r:                  np.ndarray,
     u:                  np.ndarray,
@@ -80,15 +80,12 @@ def states_and_constant(
     """
 
     s = np.copy(r)    
-    if len(r.shape) == 2:
-        const = np.zeros((r.shape[0], 1)) + 1
-        s = np.hstack((s, const))    
-    else:
-        s = np.hstack((s, np.array([1])))
+    const = np.zeros((r.shape[0], 1)) + 1
+    s = np.hstack((s, const))    
     return s
 
 
-#@numba.jit(nopython=True, fastmath=True)
+@numba.jit(nopython=True, fastmath=True)
 def states_and_inputs_and_constant(
     r:                  np.ndarray,
     u:                  np.ndarray,
@@ -106,11 +103,8 @@ def states_and_inputs_and_constant(
     """
     
     s = np.hstack((r, u))
-    if len(r.shape) == 2:
-        const = np.zeros((r.shape[0], 1)) + 1
-        s = np.hstack((s, const))    
-    else:
-        s = np.hstack((s, np.array([1])))
+    const = np.zeros((r.shape[0], 1)) + 1
+    s = np.hstack((s, const))    
     return s
 
 
@@ -130,14 +124,11 @@ def get_polynomial(
         s (np.ndarray): The feature vectors.
     """
     
-    #@numba.jit(nopython=True, fastmath=True)
+    @numba.jit(nopython=True, fastmath=True)
     def polynomial(r, u):
         s = np.copy(r)
         for poly_ind in range(2, degree+1):
-            if len(r.shape) == 2:
-                s = np.concatenate((s, r**poly_ind), axis=1)
-            else:
-                s = np.concatenate((s, r**poly_ind), axis=0)
+            s = np.concatenate((s, r**poly_ind), axis=1)
         return s
     
     return polynomial
