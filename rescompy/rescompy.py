@@ -332,7 +332,8 @@ class PredictResult:
         reservoir_outputs: np.ndarray,
         target_outputs:    Optional[np.ndarray] = None,
         resync_inputs:     Optional[np.ndarray] = None,
-        resync_states:     Optional[np.ndarray] = None
+        resync_states:     Optional[np.ndarray] = None,
+        resync_outputs:    Optional[np.ndarray] = None   
         ):
         """The initialization method of the PredictResult class.
         
@@ -354,6 +355,8 @@ class PredictResult:
                 resynchronization signal.
                 The first axis must have the same length as the first axis of
                 resync_inputs.
+            resync_outputs (np.ndarray): The reservoir outputs over the
+                resynchronization period.
         """
         
         # Check for shape consistencies.
@@ -374,6 +377,7 @@ class PredictResult:
         self.target_outputs = target_outputs
         self.resync_inputs = resync_inputs
         self.resync_states = resync_states
+        self.resync_outputs = resync_outputs
 
     @property
     def rmse(self) -> np.ndarray:
@@ -943,11 +947,6 @@ class ESN:
             if len(resync_signal.shape) == 1:
                 resync_signal = resync_signal[:, None]
                 
-        # Shape the initial_state if provided as a 1D array.
-        if initial_state is not None:
-            if len(initial_state.shape) == 1:
-                initial_state = initial_state[None]
-                
         # Automatically set the predict length, if not provided.
         if predict_length is None:
             if inputs is None:
@@ -975,23 +974,19 @@ class ESN:
                               "to infer predict_length."
                         logging.warning(msg)
 
-        # If resync signal is provided, use to calculate initial state and
-        # initial input.
+        # If a resync signal is given:
+        # - if no initial state is given, reset the reservoir to all zero state and
+        # drive it with the resync signal
+        # - if an initial state is given, set the reservoir to this initial
+        # state and drive it with the resync signal.
         if resync_signal is not None:
-            
-            # If initial_input was also explicitly provided, raise warning that
-            # it will be ignored.
-            if initial_state is not None:
-                msg = "Both initial_state and resync_signal are " \
-                      "provided; initial_state will be calculated " \
-                      "from resync_signal and the provided " \
-                      "initial_state will be ignored."
-                logging.warning(msg)
-                
-            resync_states = self._get_states(np.zeros(self.size),
-                                             resync_signal)
+            if initial_state is None:
+                	resync_states = self._get_states(np.zeros(self.size), resync_signal)
+            else:
+                  resync_states = self._get_states(initial_state, resync_signal)
             initial_state = resync_states[-1][None]
             initial_input = resync_signal[-1][None]
+            resync_outputs = feature_function(resync_states, resync_signal) @ weights
 
         elif initial_state is not None:
             # Next, prioritize using a provided initial state.
@@ -999,6 +994,9 @@ class ESN:
             # this info for later debugging.
             # This will only cause an issue if the feature function needs an
             # input.
+            # Shape the initial_state if provided as a 1D array.
+            if len(initial_state.shape) == 1:
+	                initial_state = initial_state[None]
             initial_input = np.zeros((1, self.input_dimension))
             msg = "No way of calculating initial_input is " \
                     "provided; this may cause problems if " \
@@ -1033,13 +1031,6 @@ class ESN:
         states = initial_state.repeat(predict_length + 1, axis=0)
         outputs = initial_output.repeat(predict_length + 1,
                                               axis=0)
-            
-        # If no mapper provided, define a default mapper where all variables
-        # are fed back as inputs.
-        if mapper is None:
-            @numba.jit(nopython=True, fastmath=True)
-            def mapper(inputs, outputs):
-                return outputs
         
         # Try first to use the jitted version of _get_states_autonomous for
         # faster performance.
@@ -1092,10 +1083,10 @@ class ESN:
         # Calculate the outputs
         if resync_signal is None:
             return PredictResult(inputs, outputs, target_outputs, None,
-                                 None)
+                                 None, None)
         else:
             return PredictResult(inputs, outputs, target_outputs,
-                                 resync_signal, resync_states)
+                                 resync_signal, resync_states, resync_outputs)
     
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))    
