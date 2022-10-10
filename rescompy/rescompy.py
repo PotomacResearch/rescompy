@@ -314,6 +314,8 @@ class PredictResult:
         reservoir_outputs (np.ndarray): The reservoir outputs.
             The first axis must have the same length as the first axis of
             inputs.
+        reservoir_states (np.ndarray): The reservoir states over the prediction
+            period.
         target_outputs (np.ndarray): The target outputs.
             The first axis must have the same length as the first axis of
             inputs.
@@ -330,6 +332,7 @@ class PredictResult:
         self,
         inputs:            np.ndarray,
         reservoir_outputs: np.ndarray,
+        reservoir_states:  np.ndarray,
         target_outputs:    Optional[np.ndarray] = None,
         resync_inputs:     Optional[np.ndarray] = None,
         resync_states:     Optional[np.ndarray] = None,
@@ -346,6 +349,8 @@ class PredictResult:
             reservoir_outputs (np.ndarray): The reservoir outputs.
                 The first axis must have the same length as the first axis of
                 inputs.
+            reservoir_states (np.ndarray): The reservoir states over the prediction
+                period.
             target_outputs (np.ndarray): The target outputs.
                 The first axis must have the same length as the first axis of
                 inputs.
@@ -374,6 +379,7 @@ class PredictResult:
         # Assign attributes.
         self.inputs = inputs
         self.reservoir_outputs = reservoir_outputs
+        self.reservoir_states = reservoir_states
         self.target_outputs = target_outputs
         self.resync_inputs = resync_inputs
         self.resync_states = resync_states
@@ -911,7 +917,8 @@ class ESN:
                            will be used.
             resync_signal: A signal used to synchronize the ESN and derive an
                            initial state.
-                           If initial_state is provided, this will be ignored.
+                           If initial_state is also provided, resynchronization
+                           will start from this state.
             mapper: A function that maps external inputs and ESN outputs to
                     ESN inputs.
                     Essentially, this function specifies what, if any, output
@@ -1067,7 +1074,7 @@ class ESN:
             
         # If function is not jittable or for some other reason does not run
         # with the jitted _get_states_autonomous, 
-        except TypeError:
+        except:
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
@@ -1082,10 +1089,10 @@ class ESN:
         
         # Calculate the outputs
         if resync_signal is None:
-            return PredictResult(inputs, outputs, target_outputs, None,
+            return PredictResult(inputs, outputs, states, target_outputs, None,
                                  None, None)
         else:
-            return PredictResult(inputs, outputs, target_outputs,
+            return PredictResult(inputs, outputs, states, target_outputs,
                                  resync_signal, resync_states, resync_outputs)
     
 
