@@ -1074,7 +1074,7 @@ class ESN:
             
         # If function is not jittable or for some other reason does not run
         # with the jitted _get_states_autonomous, 
-        except:
+        except (TypeError, numba.UnsupportedError):
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
