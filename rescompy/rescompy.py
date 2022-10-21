@@ -41,7 +41,6 @@ warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 def default_mapper(inputs, outputs):
     return outputs
 
-
 class Standardizer:
     """The Standardizer class.
     
@@ -188,7 +187,117 @@ class Standardizer:
     def __repr__(self):
         msg = f"<Standardizer for signals with shape {self.shape}>"
         return msg
+
+class DriveResult:
+    """
+    The Drive Result class.
+    
+    Stores arrays relevant to a single drive of an ESN
+    
+    Attributes:
+        all_states (np.ndarray): The complete set of reservoir states over the
+            driving period, including the initial transient.
+        all_inputs (np.ndarray): The reservoir inputs used to drive the RC.
+            The first axis must have the same length as the first axis of
+            states.
+        all_target_outputs (np.ndarray): The target outputs.
+               The first axis must have the same shape as 
+               state_selector(shapes).
+			   If state_selector is "all" (or no state_selecter is supplied), 
+               the first axis must have the same length as the first axis of
+               states.
+        transient_length (int): The length of the initial transient.
+        node_selector (Callable): The function to select the relevant node 
+		       activations to include in feature vectors.
+        lookback_length (int): The number of time steps prior to the
+               current step required to form feature vectors.
+    """
+    
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))
+    def __init__(
+        self,
+        states:           np.ndarray,
+        inputs:           np.ndarray,
+        target_outputs:   np.ndarray = None,    
+        transient_length: int = 0,
+        feature_function: Union[Callable, str] = "all",
+        lookback_length:  int = 0,
+        ):
+        """The initialization method of the DriveResult class.
         
+        Instantiates the object and verifies the correctness of certain
+        arguments.
+        
+        Args:
+            states (np.ndarray): The set of reservoir states over the driving
+                period, including the initial transient.
+            inputs (np.ndarray): The reservoir inputs.
+                The first axis must have the same length as the first axis of
+                states.
+            target_outputs (np.ndarray): The target outputs.
+                The first axis must have the same shape as 
+                state_selector(shapes).
+			    If state_selector is "all" (or no state_selecter is supplied), 
+                the first axis must have the same length as the first axis of
+                states.
+            transient_length (int): The length of the initial transient.
+            node_selector (Callable, str): The function to select the relevant
+                node activations to include in feature vectors.
+            lookback_length (int): The number of time steps prior to the
+			    current step required to form feature vectors.
+        """
+        
+        # Check for shape consistencies.
+        utils.check_shape(inputs.shape, (states.shape[0], None),
+                          'inputs')
+                
+        # Assign attributes.
+        self.all_states = states
+        self.all_inputs = inputs
+        self.all_targets = target_outputs
+        self.transient_length = transient_length
+        self.lookback_length = lookback_length
+        self.feature_function = feature_function
+        		
+        if (target_outputs is not None):
+            utils.check_shape((self.selected_targets.shape[0], None),
+            (self.selected_features.shape[0], None),
+            'target_outputs')
+        
+    @property
+    def selected_features(self):
+        """The selected_nodes property.
+      	Returns the array of nodes selected for inclusion in the features 
+        to be associated with the reservoir drive.
+        """
+        return self.feature_function(self.all_states[self.transient_length:],
+									 self.all_inputs[self.transient_length:])
+	
+    @property
+    def all_features(self):
+        """The selected_nodes property.
+      	Returns the array of nodes selected for inclusion in the features 
+        to be associated with the reservoir drive.
+        """
+        return self.feature_function(self.all_states, self.all_inputs)
+	
+    @property
+    def selected_targets(self):
+        """The selected_nodes property.
+        If the input signal is mapped to a single target vector, that target
+        vector is returned. Otherwise the array of targets excluding the 
+        transient period and the lookback duration is returned.
+        """
+        if (self.all_targets is None):
+            msg = "selected_targets is not defined when no target outputs " \
+                      "are provided."
+            logging.error(msg)
+        elif (self.all_targets.shape[0] == 1):
+            return self.all_targets
+        else:
+            return self.all_targets[self.transient_length
+									+self.lookback_length:]
+		
 
 class TrainResult:
     """The Training Result class.
@@ -208,18 +317,17 @@ class TrainResult:
         feature_function (Callable): The function that transforms the states
             and inputs to features.
         weights (np.ndarray): The array of output weights.
-        transient_length (int): The length of the initial transient.
+        transient_lengths (List[int]): The lengths of the initial transients.
+        node_selector (Callable): The function to select the relevant node 
+		       activations to include in feature vectors.
     """
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def __init__(
         self,
-        states:           np.ndarray,
-        inputs:           np.ndarray,
-        target_outputs:   np.ndarray,
-        feature_function: Callable,
-        weights:          np.ndarray,
-        transient_length: int,
+        drive_results:     List[DriveResult],
+        feature_function:  Callable,
+        weights:           np.ndarray,
         ):
         """The initialization method of the TrainResult class.
         
@@ -227,44 +335,95 @@ class TrainResult:
         arguments.
         
         Args:
-            states (np.ndarray): The set of reservoir states over the training
-                period, including the initial transient.
-            inputs (np.ndarray): The reservoir inputs.
-                The first axis must have the same length as the first axis of
-                states.
-            target_outputs (np.ndarray): The target outputs.
-                The first axis must have the same length as the first axis of
-                states.
+            drive_results (list): The set of DriveResult object collected
+                during the training stage.
             feature_function (Callable): The function that transforms the
                 states and inputs to features.
             weights (np.ndarray): The array of output weights.
-            transient_length (int): The length of the initial transient.
         """
         
-        # Check for shape consistencies.
-        features = feature_function(states, inputs)
-        utils.check_shape(inputs.shape, (states.shape[0], None),
-                          'inputs')
-        utils.check_shape(target_outputs.shape,
-                          (states.shape[0], None), 'target_outputs')
-        utils.check_shape(weights.shape, (features.shape[1],
-                                          target_outputs.shape[1]),
-                          'weights')
+        #To-do add callable/function versions of properties that take a specific
+        #DriveResult as argument.
+		
+        #Update these shape checks
+        #Check for shape consistencies.
+        #features = feature_function(states, inputs)
+        #utils.check_shape(inputs.shape, (states.shape[0], None),
+        #                  'inputs')
+        #utils.check_shape(target_outputs.shape,
+        #                  (states.shape[0], None), 'target_outputs')
+        #utils.check_shape(weights.shape, (features.shape[1],
+        #                                  target_outputs.shape[1]),
+        #                  'weights')
         
         # Assign attributes.
-        self.states = states
-        self.inputs = inputs
-        self.target_outputs = target_outputs
         self.feature_function = feature_function
         self.weights = weights
-        self.transient_length = transient_length
+        self.drive_results = drive_results
+		
+        self.transient_lengths = [drive_result.transient_length for 
+								  drive_result in drive_results]
+        self.listed_inputs = [drive_result.all_inputs for drive_result 
+							  in drive_results]
+        self.listed_targets = [drive_result.all_targets for drive_result 
+							   in drive_results]
+        self.listed_states = [drive_result.all_states for drive_result 
+							  in drive_results]
+		
+        self.states = None
+        for task_ind in range(len(drive_results)):
+            if (self.states is None):
+                self.all_states = drive_results[task_ind].all_states
+                self.all_inputs = drive_results[task_ind].all_inputs
+                self.all_target_outputs = drive_results[task_ind].all_targets
+                self.states = drive_results[task_ind].all_states[
+					self.transient_lengths[task_ind]]
+                self.inputs = drive_results[task_ind].all_inputs[
+					self.transient_lengths[task_ind]]
+                self.target_outputs = drive_results[task_ind].selected_targets
+            else:
+                self.all_states = np.concatenate((self.all_states,
+					drive_results[task_ind].all_states))
+                self.all_inputs = np.concatenate((self.all_inputs, 
+					drive_results[task_ind].all_inputs))
+                self.all_target_outputs = np.concatenate((self.all_target_outputs, 
+					drive_results[task_ind].all_targets))
+                self.states = np.concatenate((self.states,
+					drive_results[task_ind].all_states[self.transient_lengths[task_ind]]))
+                self.inputs = np.concatenate((self.inputs, 
+					drive_results[task_ind].all_inputs[self.transient_lengths[task_ind]]))
+                self.target_outputs = np.concatenate((self.target_outputs, 
+					drive_results[task_ind].selected_targets))
+						
+    @property
+    def transient_length(self):
+        """The transient length associated with the TrainResult object.
+        If the same transient length applied to all training signals, this 
+        this transient length is returned.
+        If multiple transient lengths applied, an error will be raised."""
+        
+        transients = np.array(self.transient_lengths)
+        if transients == transients[0]:
+            return transients[0]
+        else:
+            msg = "Transient length is not defined when different training " \
+                      "signals employed different transient lengths."
+            logging.error(msg)
         
     @property
     def features(self):
         """The features property.
         Computes the reservoir features from the states and inputs using the
         feature_function."""
-        return self.feature_function(self.states, self.inputs)
+        features = None
+        for task_ind in range(len(self.drive_results)):
+            if (features is None):
+                features = self.drive_results[task_ind].selected_features
+            else:
+                features = np.concatenate(
+					(features, self.drive_results[task_ind].selected_features),
+					axis = 0)
+        return features
     
     @property
     def reservoir_outputs(self):
@@ -365,12 +524,12 @@ class PredictResult:
         """
         
         # Check for shape consistencies.
-        utils.check_shape(reservoir_outputs.shape,
-                          (inputs.shape[0], None), 'reservoir_outputs')
-        if target_outputs is not None:
-            utils.check_shape(target_outputs.shape,
-                              (inputs.shape[0], None),
-                              'target_outputs')
+        #utils.check_shape(reservoir_outputs.shape,
+        #                  (inputs.shape[0], None), 'reservoir_outputs')
+        #if target_outputs is not None:
+        #    utils.check_shape(target_outputs.shape,
+        #                      (inputs.shape[0], None),
+        #                      'target_outputs')
         if resync_inputs is not None and resync_states is not None:
             utils.check_shape(resync_states.shape, 
                               (resync_inputs.shape[0], None),
@@ -733,32 +892,46 @@ class ESN:
     def _get_states(
         self, 
         initial_state:      np.ndarray, 
-        inputs:             np.ndarray):
-        states = initial_state[None].repeat(inputs.shape[0] + 1,
-                                                   axis=0)
+        inputs:             np.ndarray,
+        target_outputs:     np.ndarray = None,
+        transient_length:   int = 0,
+        feature_function:   Callable = features.states_only,
+		lookback_length:    int = 0
+        ):
+        
+        states = initial_state[None].repeat(inputs.shape[0] + 1, axis=0)
 
         # Propagate the reservoir state with the input signal.
-        return _get_states_driven(inputs, states,
+        states = _get_states_driven(inputs, states,
                                          self.A.data, self.A.indices,
                                          self.A.indptr, self.A.shape,
                                          self.B, self.C,
                                          self.leaking_rate)
-    
+        
+        return DriveResult(states, inputs, target_outputs, transient_length,
+                           feature_function, lookback_length)
+
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
-    def train(
+    def train_batched(
         self,
-        transient_length:  int,
+        transient_lengths: Union[int, List[int]],
         inputs:            Union[np.ndarray, List[np.ndarray]],
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
-        feature_function:  Callable                                  = features.states_only,
-        regression:        Callable                                  = regressions.default(),
+        feature_function:  Optional[Callable]                        = features.states_only,
+        regularization:    Union[float, np.ndarray]                  = 1e-6,
+        prior_guess:       np.ndarray                                = None,
+		lookback_length:   int                                       = 0,
+		batch_size:        int                                       = 10,
+        accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
         """The training method.
                 
         Args:
-            transient_length: The length of the initial transient to be
-                              discarded.
+            transient_lengths: The length of the initial transient to be
+                              discarded for each sample input signal.
+							  If a single int is provided, it will be the 
+							  transient length for all sample inputs.
             inputs: An array of ESN inputs.
                     The first dimension is the number of samples, and the
                     second dimension must be equal to self.input_dimension.
@@ -769,8 +942,19 @@ class ESN:
                             to predict the inputs.
             feature_function: The function that forms the feature vectors from
                               the reservoir states.
-            regression: The optimizer that minimizes the difference between
-                        features and target_outputs.
+            regularization: The regularization strength per sample input signal
+                            in the ridge regression formula. If passed as a 
+							float, this value will regularize all features. To 
+							regularize each feature differently, an array of
+							regularization strengths may be passed.
+			prior_guess (np.ndarray): An initial guess for the output weights.
+            batch_size (int): The number of samples ESN inputs to process
+                        before each update to the regression matrices.
+            accessible_drives (str, int, list): The training signals whose
+                        associated DriveResult objects will be available in the
+                        returned TrainResult object. Defaults to all.
+			lookback_length (int): The number of time steps prior to the
+			    current step required to form feature vectors.
                                    
         Returns:
             result: A TrainResult object containing information about the
@@ -779,6 +963,8 @@ class ESN:
         
         # For downstream clarity, collect inputs and target_outputs in a list,
         # if not already.
+        if not isinstance(transient_lengths, list):
+            transient_lengths = [transient_lengths]
         if not isinstance(inputs, list):
             inputs = [inputs]
         if not isinstance(target_outputs, list):
@@ -792,6 +978,13 @@ class ESN:
         # provided.
         if len(inputs) != len(target_outputs):
             msg = "len(target_outputs) must be None or match len(inputs)."
+            logging.error(msg)
+			
+        # Confirm that the same number of inputs and transients are
+        # provided.
+        if len(transient_lengths) == 1: transient_lengths = transient_lengths * len(inputs)
+        elif len(transient_lengths) != len(inputs): 
+            msg = "len(transient_lengths) must be one or match len(inputs)."
             logging.error(msg)
         
         # Shape inputs and target_outputs, if necessary.
@@ -811,83 +1004,258 @@ class ESN:
                 target_outputs[task_ind] = np.copy(inputs[task_ind])[1:]
                 inputs[task_ind] = np.copy(inputs[task_ind])[:-1]
                     
-        # Check that arguments are in the correct range.
-        utils.check_range(transient_length, 'transient_length', 0,
-                          'geq', True)
-        utils.check_range(transient_length, 'transient_length',
-                          target_outputs[0].shape[0], 'l', True)
-        
-        # Check for the appropriate shapes.
-        for task_ind in range(len(inputs)):
-            if len(inputs) == 1:
-                msg1 = 'inputs'
-                msg2 = 'target_outputs'
-            else:
-                msg1 = f'inputs[{task_ind}]'
-                msg2 = f'target_outputs[{task_ind}]'
-            utils.check_shape(inputs[task_ind].shape,
-                          (None, self.input_dimension), msg1)
-            utils.check_shape(target_outputs[task_ind].shape,
-                              (inputs[task_ind].shape[0], None), msg2)
+            # Check that arguments are in the correct range.
+            utils.check_range(transient_lengths[task_ind], 'transient_length',
+							  0, 'geq', True)
+            utils.check_range(transient_lengths[task_ind], 'transient_length',
+	                          inputs[task_ind].shape[0], 'l', True)
         
         # If no initial state is provided, start at all zeros.
         if initial_state is None:
             initial_state = np.zeros((self.size))
-
+		
+        # Check for the appropriate shapes.
+        for task_ind in range(len(inputs)):
+            if len(inputs) == 1: msg1 = 'inputs'
+            else: msg1 = f'inputs[{task_ind}]'
+            utils.check_shape(inputs[task_ind].shape,
+                          (None, self.input_dimension), msg1)
+        
+        num_samples = len(inputs)
+        batch_size = min(num_samples, batch_size)
+		
+        num_batches = num_samples // batch_size
+        num_remainders = num_samples % batch_size
+		
         # Get the propagated reservoir states.
         # Separately, record the states post-transient for training.
-        states_full = None
-        states_train = None
-        for inputs_i in inputs:
-            states_full_i = self._get_states(initial_state, inputs_i)
-            states_train_i = states_full_i[transient_length:]
-            if states_full is None:
-                states_full = states_full_i
-                states_train = states_train_i
+        features = None
+        drive_results = [None] * num_samples
+        PR_T = None
+        RR_T = None
+        for batch_ind in range(num_batches):
+            for task_ind in range(batch_size):
+                total_ind = batch_ind * batch_size + task_ind
+                drive_result_i = self._get_states(initial_state,
+											 inputs[total_ind],
+											 target_outputs[total_ind],
+											 transient_lengths[total_ind],
+											 feature_function,
+											 lookback_length
+											 )
+                features_i = drive_result_i.selected_features
+                targets_i = drive_result_i.selected_targets
+                if (accessible_drives == "final"):
+	                drive_results = [drive_result_i]
+                else: drive_results[task_ind] = drive_result_i
+                if features is None:
+                    features = features_i
+                    targets = targets_i
+                else:
+                    features = np.concatenate((features, features_i))
+                    targets = np.concatenate((targets, targets_i))
+            if (RR_T is None):
+                RR_T = features.T @ features
+                PR_T = features.T @ targets
             else:
-                states_full = np.concatenate((states_full,
-                                              states_full_i))
-                states_train = np.concatenate((states_train,
-                                               states_train_i))
+                RR_T += features.T @ features
+                PR_T += features.T @ targets
+            feature_dim = features.shape[1]
+            features = None
+
+        if (num_remainders):
+            for task_ind in range(num_remainders):
+                total_ind = num_batches * batch_size + task_ind
+                drive_result_i = self._get_states(initial_state,
+										 inputs[total_ind],
+										 target_outputs[total_ind],
+										 transient_lengths[total_ind],
+										 feature_function,
+										 lookback_length
+										 )
+                features_i = drive_result_i.selected_features
+                targets_i = drive_result_i.selected_targets
+                if (accessible_drives == "final"):
+	                drive_results = [drive_result_i]
+                else: drive_results[task_ind] = drive_result_i
+                if features is None:
+                    features = features_i
+                    targets = targets_i
+                else:
+                    features = np.concatenate((features, features_i))
+                    targets = np.concatenate((targets, targets_i))
+            RR_T += features.T @ features
+            PR_T += features.T @ targets
                 
-        # Similarly, record the inputs and target_outputs post-transient.
-        inputs_full = None
-        inputs_train = None
-        for inputs_i in inputs:
-            inputs_full_i = np.copy(inputs_i)
-            inputs_train_i = inputs_i[transient_length:]
-            if inputs_full is None:
-                inputs_full = inputs_full_i
-                inputs_train = inputs_train_i
-            else:
-                inputs_full = np.concatenate((inputs_full,
-                                              inputs_full_i))
-                inputs_train = np.concatenate((inputs_train,
-                                               inputs_train_i))
-        target_outputs_full = None
-        target_outputs_train = None
-        for target_outputs_i in target_outputs:
-            target_outputs_full_i = np.copy(target_outputs_i)
-            target_outputs_train_i = target_outputs_i[transient_length:]
-            if target_outputs_full is None:
-                target_outputs_full = target_outputs_full_i
-                target_outputs_train = target_outputs_train_i
-            else:
-                target_outputs_full = np.concatenate((target_outputs_full,
-                                                      target_outputs_full_i))
-                target_outputs_train = np.concatenate((target_outputs_train,
-                                                       target_outputs_train_i))
-        
-        # Form feature vectors from reservoir states.
-        features = feature_function(states_train, inputs_train)
-        
+        # Regularization normalized by such that the resulting fit is
+		# independent of the number of sample input signals.
+        if isinstance(regularization, float):
+            	regularization = num_samples * regularization * np.eye(feature_dim)
+        elif isinstance(regularization, np.ndarray):
+            utils.check_shape(regularization.shape, (feature_dim,),
+							  'regularization')
+            regularization = np.multiply(np.eye(feature_dim),
+										 num_samples * regularization)
+		
         # Optimize output weights.
-        weights = regression(features, target_outputs_train)
+        if (prior_guess is None):
+            weights = np.linalg.solve(RR_T + num_samples * regularization, PR_T)
+        else:
+            utils.check_shape(prior_guess.shape,
+	                          (feature_dim, target_outputs[0].shape[1]),
+							  'prior_guess')
+            weights = np.linalg.solve(RR_T + num_samples * regularization,
+	            PR_T + num_samples * regularization @ prior_guess)
         
         # Construct and return the training result.
-        return TrainResult(states_full, inputs_full,
-                           target_outputs_full, feature_function,
-                           weights, transient_length)
+        if (accessible_drives == "all" or accessible_drives == "final"):
+            	return TrainResult(drive_results, feature_function, weights)
+        else:
+            if isinstance(accessible_drives, int):
+                	accessible_drives = [accessible_drives]
+            drive_results_returned = [drive_results[task_ind] for task_ind in
+									  accessible_drives]
+            return TrainResult(drive_results_returned, feature_function, weights)
+
+    
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))
+    def train(
+        self,
+        transient_length:  Union[int, List[int]],
+        inputs:            Union[np.ndarray, List[np.ndarray]],
+        target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
+        initial_state:     Optional[np.ndarray]                      = None,
+        feature_function:  Callable                                  = features.states_only,
+        regression:        Callable                                  = regressions.default(),
+		accessible_drives: Union[int, List[int], str]                = "all",
+        lookback_length:   int                                       = 0
+        ) -> TrainResult:
+        """The training method.
+                
+        Args:
+            transient_lengths: The length of the initial transient to be
+                              discarded for each sample input signal.
+							  If a single int is provided, it will be the 
+							  transient length for all sample inputs.
+            inputs: An array of ESN inputs.
+                    The first dimension is the number of samples, and the
+                    second dimension must be equal to self.input_dimension.
+            target_outputs: An array of desired ESN outputs.
+                            The first dimension is the number of samples and
+                            must be equal to the first dimension of inputs.
+                            If not provided, it is assumed that we are trying
+                            to predict the inputs.
+            feature_function: The function that forms the feature vectors from
+                              the reservoir states.
+            regression: The optimizer that minimizes the difference between
+                        features and target_outputs.
+			accessible_drives (str, int, list): The training signals whose
+                        associated DriveResult objects will be available in the
+                        returned TrainResult object. Defaults to all.
+			lookback_length (int): The number of time steps prior to the
+			    current step required to form feature vectors.
+                                   
+        Returns:
+            result: A TrainResult object containing information about the
+                    training process.
+        """
+        
+        # For downstream clarity, collect inputs and target_outputs in a list,
+        # if not already.
+        if not isinstance(transient_length, list):
+            transient_length = [transient_length]
+        if not isinstance(inputs, list):
+            inputs = [inputs]
+        if not isinstance(target_outputs, list):
+            target_outputs = [target_outputs]
+            
+            # If target_outputs was not provided, assume None for every input.
+            if target_outputs[0] is None:
+                target_outputs *= len(inputs)
+            
+        # Confirm that the same number of inputs and target_outputs are
+        # provided.
+        if len(inputs) != len(target_outputs):
+            msg = "len(target_outputs) must be None or match len(inputs)."
+            logging.error(msg)
+			
+        # Confirm that the same number of inputs and transients are
+        # provided.
+        if len(transient_length) == 1: transient_length = transient_length * len(inputs)
+        elif len(transient_length) != len(inputs): 
+            msg = "len(transient_lengths) must be one or match len(inputs)."
+            logging.error(msg)
+        
+        # Shape inputs and target_outputs, if necessary.
+        for inputs_ind in range(len(inputs)):
+            if len(inputs[inputs_ind].shape) == 1:
+                inputs[inputs_ind] = inputs[inputs_ind][:, None]
+        for target_outputs_ind in range(len(target_outputs)):
+            if target_outputs[target_outputs_ind] is not None:
+                if len(target_outputs[target_outputs_ind].shape) == 1:
+                    target_outputs[target_outputs_ind] = \
+                        target_outputs[target_outputs_ind][:, None]
+        
+        # If no targets are provided, assume we are trying to predict the
+        # inputs.
+        for task_ind in range(len(inputs)):
+            if target_outputs[task_ind] is None:
+                target_outputs[task_ind] = np.copy(inputs[task_ind])[1:]
+                inputs[task_ind] = np.copy(inputs[task_ind])[:-1]
+                    
+            # Check that arguments are in the correct range.
+            utils.check_range(transient_length[task_ind], 'transient_length',
+							  0, 'geq', True)
+            utils.check_range(transient_length[task_ind], 'transient_length',
+	                          inputs[task_ind].shape[0], 'l', True)
+        
+        # If no initial state is provided, start at all zeros.
+        if initial_state is None:
+            initial_state = np.zeros((self.size))
+		
+        # Check for the appropriate shapes.
+        for task_ind in range(len(inputs)):
+            if len(inputs) == 1: msg1 = 'inputs'
+            else: msg1 = f'inputs[{task_ind}]'
+            utils.check_shape(inputs[task_ind].shape,
+                          (None, self.input_dimension), msg1)            
+        		
+        # Get the propagated reservoir states.
+        # Separately, record the states post-transient for training.
+        features = None
+        drive_results = [None] * len(inputs)
+        for task_ind in range(len(inputs)):
+            drive_result_i = self._get_states(
+				initial_state,
+				inputs[task_ind],
+				target_outputs[task_ind],
+				transient_length[task_ind],
+				feature_function,
+				lookback_length
+				)
+            features_i = drive_result_i.selected_features
+            targets_i = drive_result_i.selected_targets
+            if (accessible_drives == "final"): drive_results = [drive_result_i]
+            else: drive_results[task_ind] = drive_result_i
+            if features is None:
+                features = features_i
+                targets = targets_i
+            else:
+                features = np.concatenate((features, features_i))
+                targets = np.concatenate((targets, targets_i))
+        
+        # Optimize output weights.
+        weights = regression(features, targets)
+        
+        # Construct and return the training result.
+        if (accessible_drives == "all" or accessible_drives == "final"):
+            	return TrainResult(drive_results, feature_function, weights)
+        else:
+            if isinstance(accessible_drives, int):
+                	accessible_drives = [accessible_drives]
+            drive_results_returned = [drive_results[task_ind] for task_ind
+										  in accessible_drives]
+            return TrainResult(drive_results_returned, feature_function, weights)
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))        
     def predict(
@@ -900,6 +1268,9 @@ class ESN:
         resync_signal:    Optional[np.ndarray] = None,
         mapper:           Optional[Callable]   = default_mapper,
         feature_function: Optional[Callable]   = None,
+        lookback_states:  Optional[np.ndarray] = None,
+		lookback_inputs:  Optional[np.ndarray] = None,
+        lookback_length:  Optional[int]        = 0,
         ) -> PredictResult:
         """The prediction method.
                 
@@ -927,6 +1298,9 @@ class ESN:
                               the reservoir states.
                               Only used if weights are provided in place of
                               train_result.
+            	lookback_length (int): The number of time steps prior to the
+			    current step required to form feature vectors.
+		
         Returns:
             result: The computed prediction result.
         """
@@ -980,6 +1354,43 @@ class ESN:
                               "are inconsistent; using inputs " \
                               "to infer predict_length."
                         logging.warning(msg)
+        
+        if (lookback_states is not None and lookback_inputs is not None):
+            msg = 'lookback_states'
+            utils.check_shape(lookback_states,
+                          (None, self.size), msg)
+            msg = 'lookback_inputs'
+            utils.check_shape(lookback_inputs,
+                          (None, self.input_dimension), msg)
+            if (lookback_inputs.shape[0] == lookback_states.shape[0]):
+                lookback_length = lookback_inputs.shape[0] - 1
+            else:
+                msg = "lookback_states and lookback_inputs are inconsistent;" \
+                      " lookback_length cannot be defined."
+                logging.warning(msg)
+        elif lookback_states is not None:
+            msg = 'lookback_states'
+            utils.check_shape(lookback_states,
+                          (None, self.size), msg)
+            lookback_length = lookback_states.shape[0] - 1
+            if (inputs is None):
+                lookback_inputs = np.zeros((lookback_length + 1, self.input_dimension))   
+            else:
+                lookback_inputs = np.zeros((lookback_length + 1, self.input_dimension)) 
+                lookback_inputs[-1] = inputs[-1]
+        elif lookback_inputs is not None:
+            msg = 'lookback_inputs'
+            utils.check_shape(lookback_inputs,
+                          (None, self.input_dimension), msg)
+            lookback_length = lookback_inputs.shape[0] - 1
+            lookback_states = np.zeros((lookback_length + 1, self.size))
+        else:
+            lookback_states = np.zeros((lookback_length + 1, self.size)) 
+            if (inputs is None):
+                lookback_inputs = np.zeros((lookback_length + 1, self.input_dimension))   
+            else:
+                lookback_inputs = np.zeros((lookback_length + 1, self.input_dimension)) 
+                lookback_inputs[-1] = inputs[-1]
 
         # If a resync signal is given:
         # - if no initial state is given, reset the reservoir to all zero state and
@@ -988,13 +1399,29 @@ class ESN:
         # state and drive it with the resync signal.
         if resync_signal is not None:
             if initial_state is None:
-                	resync_states = self._get_states(np.zeros(self.size), resync_signal)
+                	resync_drive = self._get_states(
+						            initial_state = np.zeros(self.size),
+						            inputs = resync_signal,
+						            transient_length = 0,
+						            feature_function = feature_function,
+                                    lookback_length = 0
+									)
             else:
-                  resync_states = self._get_states(initial_state, resync_signal)
-            initial_state = resync_states[-1][None]
-            initial_input = resync_signal[-1][None]
-            resync_outputs = feature_function(resync_states, resync_signal) @ weights
-
+                resync_drive = self._get_states(
+						            initial_state = initial_state,
+						            inputs = resync_signal,
+						            transient_length = 0,
+						            feature_function = feature_function,
+                                    lookback_length = 0
+									)
+            
+            resync_states = resync_drive.all_states
+            resync_outputs = resync_drive.selected_features @ weights
+            lookback_states = resync_drive.all_states[-(lookback_length + 1):].reshape((-1, self.size))
+            lookback_inputs = resync_signal[-(lookback_length + 1):].reshape((-1, self.input_dimension))
+            initial_state = lookback_states[-1][None]
+            initial_input = lookback_inputs[-1][None]
+   
         elif initial_state is not None:
             # Next, prioritize using a provided initial state.
             # We assume in this case that no initial input is needed, but log
@@ -1002,9 +1429,9 @@ class ESN:
             # This will only cause an issue if the feature function needs an
             # input.
             # Shape the initial_state if provided as a 1D array.
-            if len(initial_state.shape) == 1:
-	                initial_state = initial_state[None]
-            initial_input = np.zeros((1, self.input_dimension))
+            if len(initial_state.shape) == 1: initial_state = initial_state[None]
+            lookback_states[-1] = initial_state[-1]
+            initial_input = lookback_inputs[-1][None]
             msg = "No way of calculating initial_input is " \
                     "provided; this may cause problems if " \
                     "feature_function requires an input."
@@ -1014,10 +1441,14 @@ class ESN:
             
             # Finally, if neither is provided, attempt to use the
             # TrainResult object.
-            
-            initial_state = train_result.states[-1][None]
-            initial_input = train_result.inputs[-1][None]
-                
+            #if (train_result)
+            lookback_states = train_result.all_states[-(lookback_length + 1):]
+            lookback_states = lookback_states.reshape((lookback_length + 1, -1))
+            lookback_inputs = train_result.all_inputs[-(lookback_length + 1):]
+            lookback_inputs = lookback_inputs.reshape((lookback_length + 1, -1))
+            initial_state = train_result.all_states[-1][None]
+            initial_input = lookback_inputs[-1][None]    
+			
         else:
             # If we get here, there was not enough information to calculate
             # an initial state and we must raise an error.
@@ -1029,15 +1460,17 @@ class ESN:
         # If inputs aren't provided, just allocate space for them.
         if inputs is None:
             inputs = initial_input.repeat(predict_length, axis=0)
-            
+  
         # Calculate initial output.
-        initial_output = feature_function(initial_state,
-                                          initial_input) @ weights
+        initial_output = feature_function(lookback_states,
+                                          lookback_inputs) @ weights
+        #print(initial_output)
             
         # Allocate memory for states and outputs.
         states = initial_state.repeat(predict_length + 1, axis=0)
-        outputs = initial_output.repeat(predict_length + 1,
-                                              axis=0)
+        outputs = initial_output.repeat(predict_length + 1, axis=0)
+        states = np.concatenate((lookback_states, states[1:]), axis = 0)
+        inputs = np.concatenate((lookback_inputs, inputs[1:]), axis = 0)
         
         # Try first to use the jitted version of _get_states_autonomous for
         # faster performance.
@@ -1054,7 +1487,7 @@ class ESN:
             # Otherwise, grab the already jitted function.
             else:
                 feature_function_jit = feature_function
-                                        
+			                                        
             # For speed and successful jitting in certain cases, ensure that
             # the data arrays are contiguous.
             if not inputs.data.contiguous:
@@ -1068,24 +1501,142 @@ class ESN:
             # state propagation function.
             states, outputs = _get_states_autonomous_jit(inputs, outputs,
                               states, feature_function_jit,
-                              mapper, self.A.data, self.A.indices,
+                              mapper, lookback_length,
+							  self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
             
         # If function is not jittable or for some other reason does not run
         # with the jitted _get_states_autonomous, 
-        except:
+        except (TypeError, numba.UnsupportedError):
             msg = "Could not compile the autonomous state " \
                       "propagation function. Trying a non-compiled " \
                       "version instead."
             logging.warning(msg)
             states, outputs = _get_states_autonomous(inputs, outputs,
                               states, feature_function,
-                              mapper, self.A.data, self.A.indices,
+                              mapper, lookback_length, 
+							  self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
-            states = states
-            outputs = outputs
+        
+
+        inputs = inputs[lookback_length:]
+        if resync_signal is None:
+            return PredictResult(inputs, outputs, states, target_outputs, None,
+                                 None, None)
+        else:
+            return PredictResult(inputs, outputs, states, target_outputs,
+                                 resync_signal, resync_states, resync_outputs)
+		
+	
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))        
+    def map_to_target(
+        self,
+        train_result:     Union[TrainResult, np.ndarray],
+        inputs:           Optional[np.ndarray] = None,
+        target_outputs:   Optional[np.ndarray] = None,
+        initial_state:    Optional[np.ndarray] = None,
+        resync_signal:    Optional[np.ndarray] = None,
+        feature_function: Optional[Callable]   = None,
+        ) -> PredictResult:
+        """The prediction method.
+                
+        Args:
+            train_result: The trained result object containing the output
+                          weights, reservoir states, etc.
+            inputs: The external inputs to the ESN.
+            target_outputs: The target outputs during the testing period.
+                            This is needed to compute performance statistics in
+                            the PredictResult object.
+            initial_state: The initial state of the reservoir at the beginning
+                           of the prediction period.
+                           If not provided, the final state of the train_result
+                           will be used.
+            resync_signal: A signal used to synchronize the ESN and derive an
+                           initial state.
+                           If initial_state is also provided, resynchronization
+                           will start from this state.
+            mapper: A function that maps external inputs and ESN outputs to
+                    ESN inputs.
+                    Essentially, this function specifies what, if any, output
+                    variables are fed back, and where.
+            feature_function: The function that forms the feature vectors from
+                              the reservoir states.
+                              Only used if weights are provided in place of
+                              train_result.
+            
+        Returns:
+            result: The computed prediction result.
+        """
+        
+        # Grab weights and feature function from train_result, if provided.
+        if isinstance(train_result, TrainResult):
+            weights = train_result.weights
+            if feature_function is not None:
+                msg = 'feature_function is provided, but ignored; ' \
+                          'using train_result.feature_function ' \
+                          'instead.'
+                logging.warning(msg)
+            feature_function = train_result.feature_function
+        else:
+            weights = train_result
+
+        # Shape inputs, target_outputs, and resync_signal, if necessary.
+        if inputs is not None:
+            if len(inputs.shape) == 1:
+                inputs = inputs[:, None]
+        if target_outputs is not None:
+            if len(target_outputs.shape) == 1:
+                target_outputs = target_outputs[:, None]
+        if resync_signal is not None:
+            if len(resync_signal.shape) == 1:
+                resync_signal = resync_signal[:, None]
+                
+        # If a resync signal is given:
+        # - if no initial state is given, reset the reservoir to all zero state and
+        # drive it with the resync signal
+        # - if an initial state is given, set the reservoir to this initial
+        # state and drive it with the resync signal.
+        if resync_signal is not None:
+            if initial_state is None:
+                	resync_drive = self._get_states(
+						            initial_state = np.zeros(self.size),
+						            inputs = resync_signal,
+						            transient_length = 0,
+						            feature_function = feature_function,
+                                    lookback_length = 0
+									)
+            else:
+                resync_drive = self._get_states(
+						            initial_state = initial_state,
+						            inputs = resync_signal,
+						            transient_length = 0,
+						            feature_function = feature_function,
+                                    lookback_length = 0
+									)
+            
+            initial_state = resync_drive.all_states[-1]
+            resync_states = resync_drive.all_states
+            resync_outputs = resync_drive.selected_features @ weights
+			
+        elif initial_state is None:
+            initial_state = np.zeros(self.size)
+        
+        else:
+            utils.check_range(initial_state.shape[0], 'initial_state',
+	                          self.size, 'eq', True)
+        
+        drive_result = self._get_states(
+						            initial_state = initial_state,
+						            inputs = inputs,
+						            transient_length = 0,
+						            feature_function = feature_function,
+                                    lookback_length = 0
+									)
+        
+        outputs = drive_result.selected_features @ weights
+        states = drive_result.all_states
         
         # Calculate the outputs
         if resync_signal is None:
@@ -1355,19 +1906,20 @@ def _get_states_driven(
 
 
 def _get_states_autonomous(
-    u:         np.ndarray,
-    v:         np.ndarray,
-    r:         np.ndarray,
-    feature:   Callable,
-    mapper:    Callable,
-    A_data:    np.ndarray,
-    A_indices: np.ndarray,
-    A_indptr:  np.ndarray,
-    A_shape:   tuple,
-    B:         np.ndarray,
-    C:         np.ndarray,
-    W:         np.ndarray,
-    leakage:   float,
+    u:               np.ndarray,
+    v:               np.ndarray,
+    r:               np.ndarray,
+    feature:         Callable,
+    mapper:          Callable,
+    lookback_length: int,
+    A_data:          np.ndarray,
+    A_indices:       np.ndarray,
+    A_indptr:        np.ndarray,
+    A_shape:         tuple,
+    B:               np.ndarray,
+    C:               np.ndarray,
+    W:               np.ndarray,
+    leakage:         float,
     ) -> np.ndarray:
     """The uncompiled Get Autonomous States function.
     
@@ -1397,13 +1949,16 @@ def _get_states_autonomous(
         r (np.ndarray): The computed reservoir states.
     """    
 
-    for i in range(r.shape[0]-1):
-        feedback = mapper(u[i], v[i])
+    for i in range(lookback_length, r.shape[0]-1):
+        feedback = mapper(u[i], v[i-lookback_length])
         r[i+1] = (1.0-leakage)*r[i] + leakage*np.tanh(
             B @ feedback
             + _mult_vec(A_data, A_indices, A_indptr, A_shape, r[i])
             + C)
-        v[i+1] = feature(np.reshape(r[i+1], (1,-1)), np.reshape(feedback, (1, -1))) @ W
-    return r[1:], v[1:]
+        v[i-lookback_length+1] = feature(
+			np.reshape(r[i+1-lookback_length: i+2], (lookback_length+1,-1)),
+			np.reshape(feedback, (1, -1))
+			) @ W
+    return r[lookback_length+1:], v[1:]
 
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
