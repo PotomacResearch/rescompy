@@ -207,14 +207,16 @@ class TestPredictResult(unittest.TestCase):
         
         # Create PredictResult from dummy arguments.
         inputs = rng.uniform(-1, 1, (100, 3))
+        reservoir_states = rng.uniform(-1, 1, (100, 50))
         reservoir_outputs = rng.uniform(-1, 1, (100, 3))
         target_outputs = rng.uniform(-1, 1, (100, 3))
         resync_inputs = rng.uniform(-1, 1, (20, 3))
         resync_states = rng.uniform(-1, 1, (20, 10))
-        predict_result = rescompy.PredictResult(inputs, reservoir_outputs,
-                                                target_outputs,
-                                                resync_inputs,
-                                                resync_states)
+
+
+        predict_result = rescompy.PredictResult(inputs, 
+            reservoir_outputs, reservoir_states, 
+            target_outputs,resync_inputs, resync_states)
         
         # Confirm the string representation starts with 'PredictResult.'
         self.assertEqual(str(predict_result)[1:14], 'PredictResult')
@@ -233,11 +235,11 @@ class TestPredictResult(unittest.TestCase):
         target_outputs = np.linspace(0, 1.1, 100, False)[:, None]
         resync_inputs = rng.uniform(-1, 1, (20, 3))
         resync_states = rng.uniform(-1, 1, (20, 10))
-        predict_result = rescompy.PredictResult(inputs,
-                                                reservoir_outputs,
-                                                target_outputs,
-                                                resync_inputs,
-                                                resync_states)
+        reservoir_states = rng.uniform(-1, 1, (100, 50))
+
+        predict_result = rescompy.PredictResult(inputs, 
+            reservoir_outputs,reservoir_states, 
+            target_outputs,resync_inputs, resync_states)
         
         # Calculate the expected errors.
         expected_rmse = np.linspace(0, 0.1, 100, False)
