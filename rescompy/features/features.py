@@ -235,8 +235,7 @@ def states_and_inputs_time_shifted(
     def time_delayed(r, u):
         r = r.reshape((-1, r.shape[-1]))
         u = u.reshape((-1, u.shape[-1]))
-        print(r.shape)
-        print(u.shape)
+
         if (u.shape[0] == r.shape[0]):
             s = r[lookback_length:]
             for shift in range(states_decimation, states_lookback_length + 1,

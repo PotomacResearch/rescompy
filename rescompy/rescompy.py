@@ -1448,7 +1448,6 @@ class ESN:
         # Calculate initial output.
         initial_output = feature_function(lookback_states,
                                           lookback_inputs) @ weights
-        #print(initial_output)
 
         # Allocate memory for states and outputs.
         states = initial_state.repeat(predict_length + 1, axis=0)
@@ -1954,4 +1953,4 @@ def _get_states_autonomous(
 			) @ W
     return r[total_lookback+1:], v[1:]
 
-_get_states_autonomous_jit = _get_states_autonomous#numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
+_get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
