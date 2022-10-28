@@ -270,7 +270,7 @@ def states_and_inputs_time_shifted(
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def states_only_time_shifted(
         states_lookback_length:   int = 0,
-        states_decimation:        int = 0 
+        states_decimation:        int = 1 
     ):
     """The time-shifted states feature-getting function.
     

@@ -648,7 +648,7 @@ class ESN:
         input_strength:  float                    = 1.0,
         bias_strength:   float                    = 0.0,
         leaking_rate:    float                    = 1.0,
-        #seed:            Optional[int, Generator] = None,
+        #seed:           Optional[int, Generator] = None,
         seed: Union[int, None, Generator] = None,
         ):
         """The Initialization method for a ESN object.
@@ -909,8 +909,8 @@ class ESN:
                               the reservoir states.
             regression: The optimizer that minimizes the difference between
                         features and target_outputs. Must take as its arguments
-						the matrices YR_T and RR_T where Y is the matrix of 
-						targets and R the matrix of features.
+						the matrices VS_T and SS_T where V is the matrix of 
+						targets and S the matrix of features.
             batch_size (int): The number of samples ESN inputs to process
                         before each update to the regression matrices.
             accessible_drives (str, int, list): The training signals whose
@@ -1007,15 +1007,14 @@ class ESN:
         drive_results = [None] * len(accessible_drives)
         targets_saved = [None] * len(accessible_drives)
         save_ind = 0
-        YR_T = None
-        RR_T = None
+        VS_T = None
+        SS_T = None
         for batch_ind in range(num_batches):
             for task_ind in range(batch_size):
                 total_ind = batch_ind * batch_size + task_ind
                 drive_result_i = self._get_states(initial_state,
 											 inputs[total_ind],
-											 transient_lengths[total_ind],
-											 )
+											 transient_lengths[total_ind])
                 features_i = feature_function(drive_result_i.states, 
 											  drive_result_i.inputs)
                 targets_i = target_outputs[total_ind]
@@ -1040,12 +1039,12 @@ class ESN:
 													 features_train_i))
                     targets_train = np.concatenate((targets_train,
 													targets_train_i))
-            if (RR_T is None):
-                RR_T = features_train.T @ features_train
-                YR_T = features_train.T @ targets_train
+            if (SS_T is None):
+                SS_T = features_train.T @ features_train
+                VS_T = features_train.T @ targets_train
             else:
-                RR_T += features_train.T @ features_train
-                YR_T += features_train.T @ targets_train
+                SS_T += features_train.T @ features_train
+                VS_T += features_train.T @ targets_train
             
             features = None
 
@@ -1054,8 +1053,7 @@ class ESN:
                 total_ind = num_batches * batch_size + task_ind
                 drive_result_i = self._get_states(initial_state,
 										 inputs[total_ind],
-										 transient_lengths[total_ind],
-										 )
+										 transient_lengths[total_ind])
                 features_i = feature_function(drive_result_i.states, 
 											  drive_result_i.inputs)
                 targets_i = target_outputs[total_ind]
@@ -1080,11 +1078,15 @@ class ESN:
 													 features_train_i))
                     targets_train = np.concatenate((targets_train,
 													targets_train_i))
-            RR_T += features_train.T @ features_train
-            YR_T += features_train.T @ targets_train
+            if (SS_T is None):
+                SS_T = features_train.T @ features_train
+                VS_T = features_train.T @ targets_train
+            else:
+                SS_T += features_train.T @ features_train
+                VS_T += features_train.T @ targets_train
 		
         # Optimize output weights.
-        weights = regression(RR_T, YR_T)
+        weights = regression(SS_T, VS_T)
         
         # Construct and return the training result.
         return TrainResult(drive_results, targets_saved, accessible_drives,
@@ -1213,8 +1215,7 @@ class ESN:
             drive_result_i = self._get_states(
 				initial_state,
 				inputs[task_ind],
-				transient_length[task_ind],
-				)
+				transient_length[task_ind])
             features_i = feature_function(drive_result_i.states, 
 										  drive_result_i.inputs)
             targets_i = target_outputs[task_ind]
