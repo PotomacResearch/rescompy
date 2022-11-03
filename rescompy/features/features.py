@@ -39,6 +39,9 @@ def states_only(
     s = np.copy(r)    
     return s
 
+states_only.jacobian = lambda dr_du, u: dr_du
+
+
 
 @numba.jit(nopython=True, fastmath=True)
 def states_and_inputs(
@@ -57,9 +60,14 @@ def states_and_inputs(
         s (np.ndarray): The feature vectors.
     """
     
-    s = np.copy(r)
     s = np.hstack((r, u))    
     return s
+
+states_and_inputs.jacobian = lambda dr_du, u: \
+    np.hstack((
+        dr_du, 
+        np.tile(np.eye(u.shape[1]), (dr_du.shape[0], 1,1))
+    ))
 
 
 @numba.jit(nopython=True, fastmath=True)
@@ -84,6 +92,12 @@ def states_and_constant(
     s = np.hstack((s, const))    
     return s
 
+states_and_constant.jacobian = lambda dr_du, u: \
+    np.hstack((
+        dr_du, 
+        np.zeros((dr_du.shape[0], 1, u.shape[1]))
+    ))
+
 
 @numba.jit(nopython=True, fastmath=True)
 def states_and_inputs_and_constant(
@@ -107,6 +121,12 @@ def states_and_inputs_and_constant(
     s = np.hstack((s, const))    
     return s
 
+states_and_inputs_and_constant.jacobian = lambda dr_du, u: \
+    np.hstack((
+        dr_du, 
+        np.tile(np.eye(u.shape[1]), (dr_du.shape[0], 1,1)),
+        np.zeros((dr_du.shape[0], 1, u.shape[1]))
+    ))
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def get_polynomial(

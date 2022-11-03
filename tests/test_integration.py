@@ -3,6 +3,7 @@ import logging
 import numba
 import numpy as np
 import rescompy
+from rescompy import regressions
 
 
 __author__ = ['Daniel Canaday', 'Dayal Kalra', 'Alexander Wikner',
@@ -186,7 +187,50 @@ class TestCases(unittest.TestCase):
         
         self.assertTrue(kink_measure < 1)
         
+    def test_lorenz_jacobian(self):
+        """Predict a Lorenz system in a closed-loop configuration with 
+        jacobian regularization.
+        """
         
+        # Create a Lorenz signal.
+        # Partition into inputs, outputs, training, and testing.
+        u = rescompy.benchmarks.get_lorenz(return_length=10000,
+                                           seed=SEED)
+        u = rescompy.Standardizer(u).standardize(u)
+        inputs_train = u[:5000-1]
+        target_outputs_train = u[1:5000]
+        inputs_test = u[5000-1:10000-1]
+        target_outputs_test = u[5000:]
+        
+        # Create an ESN with a fixed seed.
+        esn = rescompy.ESN(3, 1000, 10, 0.59, 0.63, 0.13, 0.09, SEED)
+        
+        # Train the ESN on the training signals.
+        train_result = esn.train(1000, inputs_train,
+                                 target_outputs_train,
+                                 feature_function=
+                                 rescompy.features.states_only,
+                                 regression=regressions.jacobian(1e-6, 1e-6))
+                
+        # Predict the signal in open-loop configuration.
+        predict_result = esn.predict(train_result, inputs=inputs_test,
+                                     target_outputs=target_outputs_test)
+
+        # Lorenz is a surprisingly simple problem. Confirm that the ESN
+        # performed very well.
+        self.assertTrue(predict_result.unit_valid_length > 250)
+        
+        # A tell-tale sign of an indexing problem is a 'kink' in the error just
+        # after prediction starts. Confirm that the error is smooth around
+        # here.
+        transition_error = np.concatenate((train_result.rmse[-10:],
+                                           predict_result.rmse[:10]))
+        kink_measure = np.sqrt(np.var(transition_error))/ \
+            np.mean(transition_error)
+        
+        self.assertTrue(kink_measure < 1)
+
+
     def test_lorenz_observer(self):
         """Predict the z-component of the Lorenz system from the x- and
         y-components.
@@ -391,6 +435,7 @@ class TestCases(unittest.TestCase):
         #self.assertTrue(kink_measure < 1)
         # TODO: kink_measure > 1 despite the transition error appearing smooth;
         # need better detector for indexing errors.
+
         
 
 if __name__ == '__main__':

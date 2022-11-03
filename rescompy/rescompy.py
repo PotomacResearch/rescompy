@@ -18,6 +18,7 @@ import logging
 import numba
 import warnings
 import numpy as np
+import inspect
 import scipy.stats
 from typing import Optional, Union, Callable, Tuple, Literal, List
 from scipy import sparse as sparse
@@ -752,7 +753,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         feature_function:  Callable                                  = features.states_only,
-        regression:        Callable                                  = regressions.default(),
+        regression:        Callable                                  = regressions.tikhonov(),
         ) -> TrainResult:
         """The training method.
                 
@@ -882,7 +883,43 @@ class ESN:
         features = feature_function(states_train, inputs_train)
         
         # Optimize output weights.
-        weights = regression(features, target_outputs_train)
+        # use the signature of the regression to figure out the parameters
+        params = inspect.signature(regression).parameters
+        # assume u = input, s = feature, v = target, g is the feature function
+        map = {
+            'u': inputs,
+            's': features,
+            'v': target_outputs_train,
+            'g': feature_function,
+            'dg_du': None
+        }
+        # check that there are no unknown parameters
+        if any([k not in map for k in params.keys()]):
+            logging.error('Please ensure regression function signature is valid')
+        # construct the parameter dict 
+        args = {arg: map[arg] for arg in params.keys()}
+        # calculate dg_du if needed
+        if 'dg_du' in args:
+            if not hasattr(feature_function, 'jacobian'):
+                logging.error('Regression function requires feature jacobian')
+            # num_timesteps = states_train.shape[0]
+            # # calculate D, which is f'(a) where a is the activation at each node
+            # # D is a matrix of size (num_timesteps x reservoir dimension)
+
+            # # assume that state at time t = -1 is the same as the intial state
+            # Ar = (self.A @ np.vstack((np.reshape(initial_state, (1, self.size)), states_train)).T).T
+            # Bu = (self.B @ inputs_train.T).T
+            # D = np.square(np.reciprocal(np.cosh(Ar[:-1,:] + Bu + self.C)))
+            
+            # # dr_du at time step i is a (reservoir dimension x # of inputs)
+            # # jacobian matrix = D[i] @ B
+            # dr_du = np.zeros((num_timesteps, self.size, self.input_dimension))
+            # for i in range(num_timesteps):
+            #     dr_du[i,:,:] = self.leaking_rate*np.diag(D[i,:])@self.B
+            dr_du = _calc_dr_du(states_train, inputs_train, initial_state, self.size, 
+                self.input_dimension, self.A, self.B, self.C, self.leaking_rate)
+            args['dg_du'] = feature_function.jacobian(dr_du, inputs_train)
+        weights = regression(**args)
         
         # Construct and return the training result.
         return TrainResult(states_full, inputs_full,
@@ -1407,3 +1444,23 @@ def _get_states_autonomous(
     return r[1:], v[1:]
 
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
+
+
+def _calc_dr_du(states_train, inputs_train, initial_state, size, 
+    input_dimension, A, B, C, leaking_rate):
+
+    num_timesteps = states_train.shape[0]
+    # calculate D, which is f'(a) where a is the activation at each node
+    # D is a matrix of size (num_timesteps x reservoir dimension)
+
+    # assume that state at time t = -1 is the same as the intial state
+    Ar = (A @ np.vstack((np.reshape(initial_state, (1, size)), states_train)).T).T
+    Bu = (B @ inputs_train.T).T
+    D = np.square(np.reciprocal(np.cosh(Ar[:-1,:] + Bu + C)))
+    
+    # dr_du at time step i is a (reservoir dimension x # of inputs)
+    # jacobian matrix = D[i] @ B
+    dr_du = np.zeros((num_timesteps, size, input_dimension))
+    for i in range(num_timesteps):
+        dr_du[i,:,:] = leaking_rate*(D[i,:] * B.T).T
+    return dr_du
