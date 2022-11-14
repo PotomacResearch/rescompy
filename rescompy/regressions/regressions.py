@@ -81,13 +81,15 @@ def jacobian(
         dg_du:  np.ndarray
     ):
 
-        R_T = s.T @ s + beta_T * np.eye(s.shape[1])
-        R_J = beta_J*np.tensordot(np.transpose(dg_du, axes=[2, 0, 1]), 
-            np.transpose(dg_du, axes=[0, 2, 1]), axes=([1,0], [0,1]))
+        T_train = s.shape[0]
+        R_T = np.eye(s.shape[1])
+        R_J = np.tensordot(np.transpose(dg_du, axes=[2, 0, 1]), 
+            np.transpose(dg_du, axes=[0, 2, 1]), axes=([1,0], [0,1]))/T_train
 
-        return np.linalg.solve(R_T+R_J, s.T @ v)
+        return np.linalg.solve(s.T @ s + beta_T*R_T + beta_J*R_J, s.T @ v)
     return inner
 
+'''
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def mean_jacobian(
     mean_jacobian: np.ndarray,
@@ -123,3 +125,4 @@ def mean_jacobian(
 
         return np.linalg.solve(R_T+R_J, s.T @ v)
     return inner    
+'''

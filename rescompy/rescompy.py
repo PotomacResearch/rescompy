@@ -915,7 +915,7 @@ class ESN:
         # Construct and return the training result.
         return TrainResult(states_full, inputs_full,
                            target_outputs_full, feature_function,
-                           weights, transient_length, jacobian=args['dg_du'])
+                           weights, transient_length, jacobian=args.get('dg_du', None))
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))        
     def predict(
