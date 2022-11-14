@@ -906,7 +906,7 @@ class ESN:
             if args['dg_du'] is None:
                 if not hasattr(feature_function, 'jacobian'):
                     logging.error('Regression function requires feature jacobian')
-                dr_du = _calc_dr_du(states_train, inputs_train, initial_state, self.size, 
+                dr_du = _calc_dr_du(states_train, inputs_train, self.size, 
                     self.input_dimension, self.A, self.B, self.C, self.leaking_rate)
                 args['dg_du'] = feature_function.jacobian(dr_du, inputs_train)
                 
@@ -1437,18 +1437,26 @@ def _get_states_autonomous(
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
 
 
-def _calc_dr_du(states_train, inputs_train, initial_state, size, 
-    input_dimension, A, B, C, leaking_rate):
+def _calc_input_jacobian(states_train, inputs_train, size, A, B, C):
+    initial_state = states_train[0,:]
 
-    num_timesteps = states_train.shape[0]
     # calculate D, which is f'(a) where a is the activation at each node
     # D is a matrix of size (num_timesteps x reservoir dimension)
 
-    # assume that state at time t = -1 is the same as the intial state
+    # assume that state at time t = -1 is the same as the initial state
     Ar = (A @ np.vstack((np.reshape(initial_state, (1, size)), states_train)).T).T
     Bu = (B @ inputs_train.T).T
     D = np.square(np.reciprocal(np.cosh(Ar[:-1,:] + Bu + C)))
-    
+    return D
+
+def _calc_dr_du(states_train, inputs_train, size, 
+    input_dimension, A, B, C, leaking_rate):
+
+    D = _calc_input_jacobian(states_train, inputs_train, size, 
+        input_dimension, A, B, C, leaking_rate)
+
+    num_timesteps = states_train.shape[0]
+
     # dr_du at time step i is a (reservoir dimension x # of inputs)
     # jacobian matrix = D[i] @ B
     dr_du = np.zeros((num_timesteps, size, input_dimension))

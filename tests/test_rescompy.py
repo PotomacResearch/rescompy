@@ -4,6 +4,7 @@ import logging
 import numba
 import os
 import numpy as np
+from scipy import sparse as sparse
 from numpy.random import default_rng
 from numpy.testing import assert_array_equal as assert_equal
 from numpy.testing import assert_array_almost_equal as assert_almost_equal
@@ -376,9 +377,8 @@ class TestESN(unittest.TestCase):
             self.assertTrue(np.mean(train_result.rmse[i*100:i*100+10]) >
                             np.mean(train_result.rmse[i*100+10:(i+1)*100]))
 
-    @unittest.skip('')
     def test_train_jacobian(self):
-        # """Test that the jacobian is calculated properly during training."""
+        # """Test that the jacobian is calculated properly ."""
 
         def _load(file):
             name = os.path.join(
@@ -396,21 +396,24 @@ class TestESN(unittest.TestCase):
         # rng = default_rng(SEED)
         
         # # Create a dummy ESN with a fixed seed.
-        esn = rescompy.ESN(3, 100, 10, 0.99, 1.0, 0.5, 0.25, SEED)
+        esn = rescompy.ESN(64, 100, 10, 0.99, 1.0, 0.5, 0.25, SEED)
         # set the A, B, and C matrices to known values
-        esn.A = _load('A.csv')
-        esn.B = _load('B.csv')
-        esn.C = _load('C.csv')
+        A = _load('A.csv').T
+        B = _load('B.csv').T
+        C = _load('C.csv')
 
         inputs = _load('jacobian_target.csv')
-        reference_dg_du = _load('jacobian_feature_derivatives.csv')
-        # there's an off by one between the target vs. the reference...
-        # there's a missing timestep input 
+        D_ref = _load('jacobian_feature_derivatives.csv')
+        # reference feature includes other stuff besides the reservoir state
+        # also, we're going to throw out the first time step
+        states = _load('jacobian_features.csv')[1:,1:101]
 
-        # the feature used to generate the reference is [1, r, r^2, u]
-        def feature_func(r, u):
-            return np.vstack(())
-        
+        # check that the intermediate D calculation is correct
+        D = rescompy._calc_input_jacobian(states, inputs[:-1,:], 100, A, B, C)
+
+        # some slight differences in how the reference is calculated from 
+        # rescompy, so relax constraints
+        assert_almost_equal(D_ref[1:,:], D, decimal=2.5)  
 
 
     def test_predict(self):
