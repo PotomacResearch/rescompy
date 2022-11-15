@@ -202,7 +202,6 @@ class TestGetPolynomial(unittest.TestCase):
 
         dg_du = features.states_only.jacobian(dr_du, u)
         raise NotImplementedError()
-        assert_equal(dg_du, dr_du)
 
 if __name__ == '__main__':
     unittest.main()

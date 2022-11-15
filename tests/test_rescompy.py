@@ -409,7 +409,7 @@ class TestESN(unittest.TestCase):
         states = _load('jacobian_features.csv')[1:,1:101]
 
         # check that the intermediate D calculation is correct
-        D = rescompy._calc_input_jacobian(states, inputs[:-1,:], 100, A, B, C)
+        D = rescompy._calc_D(states, inputs[:-1,:], 100, A, B, C)
 
         # some slight differences in how the reference is calculated from 
         # rescompy, so relax constraints

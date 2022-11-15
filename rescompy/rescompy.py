@@ -1437,7 +1437,7 @@ def _get_states_autonomous(
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
 
 
-def _calc_input_jacobian(states_train, inputs_train, size, A, B, C):
+def _calc_D(states_train, inputs_train, size, A, B, C):
     initial_state = states_train[0,:]
 
     # calculate D, which is f'(a) where a is the activation at each node
@@ -1452,8 +1452,8 @@ def _calc_input_jacobian(states_train, inputs_train, size, A, B, C):
 def _calc_dr_du(states_train, inputs_train, size, 
     input_dimension, A, B, C, leaking_rate):
 
-    D = _calc_input_jacobian(states_train, inputs_train, size, 
-        input_dimension, A, B, C, leaking_rate)
+    D = _calc_D(states_train, inputs_train, size, 
+        A, B, C)
 
     num_timesteps = states_train.shape[0]
 
