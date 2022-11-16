@@ -39,12 +39,9 @@ def states_only(
     s = np.copy(r)    
     return s
 
-<<<<<<< HEAD
 states_only.jacobian = lambda dr_du, u: dr_du
 
-=======
 states_only.feature_size = lambda esn_size,input_dim: esn_size
->>>>>>> 5ba14649650b7a167f69ecee5ab49e9e4aba3dd7
 
 
 @numba.jit(nopython=True, fastmath=True)
@@ -67,15 +64,12 @@ def states_and_inputs(
     s = np.hstack((r, u))    
     return s
 
-<<<<<<< HEAD
 states_and_inputs.jacobian = lambda dr_du, u: \
     np.hstack((
         dr_du, 
         np.tile(np.eye(u.shape[1]), (dr_du.shape[0], 1,1))
     ))
-=======
 states_and_inputs.feature_size = lambda esn_size,input_dim: esn_size+input_dim
->>>>>>> 5ba14649650b7a167f69ecee5ab49e9e4aba3dd7
 
 
 @numba.jit(nopython=True, fastmath=True)
@@ -100,16 +94,13 @@ def states_and_constant(
     s = np.hstack((s, const))    
     return s
 
-<<<<<<< HEAD
 states_and_constant.jacobian = lambda dr_du, u: \
     np.hstack((
         dr_du, 
         np.zeros((dr_du.shape[0], 1, u.shape[1]))
     ))
 
-=======
 states_and_constant.feature_size = lambda esn_size,input_dim: 1+esn_size
->>>>>>> 5ba14649650b7a167f69ecee5ab49e9e4aba3dd7
 
 @numba.jit(nopython=True, fastmath=True)
 def states_and_inputs_and_constant(
@@ -133,16 +124,13 @@ def states_and_inputs_and_constant(
     s = np.hstack((s, const))    
     return s
 
-<<<<<<< HEAD
 states_and_inputs_and_constant.jacobian = lambda dr_du, u: \
     np.hstack((
         dr_du, 
         np.tile(np.eye(u.shape[1]), (dr_du.shape[0], 1,1)),
         np.zeros((dr_du.shape[0], 1, u.shape[1]))
     ))
-=======
 states_and_inputs_and_constant.feature_size = lambda esn_size,input_dim: 1+input_dim+esn_size
->>>>>>> 5ba14649650b7a167f69ecee5ab49e9e4aba3dd7
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def get_polynomial(

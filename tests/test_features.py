@@ -185,6 +185,7 @@ class TestGetPolynomial(unittest.TestCase):
         assert_equal(s[:, :10], r)
         assert_almost_equal(s[:, 10:20], r**2)
         assert_almost_equal(s[:, 20:30], r**3)
+        raise NotImplementedError('need to add feature size')
 
     def test_jacobian(self):
         rng = default_rng(SEED)
