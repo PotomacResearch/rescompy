@@ -35,6 +35,8 @@ class TestStatesOnly(unittest.TestCase):
         
         # Compare to expected results.
         assert_equal(s, r)
+        assert_equal(features.states_only.feature_size(100, 50), 100)
+        
                 
 
 class TestStatesAndInputs(unittest.TestCase):
@@ -57,6 +59,7 @@ class TestStatesAndInputs(unittest.TestCase):
         self.assertEqual(s.shape, (100, 13))
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10:], u)
+        assert_equal(features.states_and_inputs.feature_size(100, 50), 150)
                 
 
 class TestStatesAndConstant(unittest.TestCase):
@@ -79,6 +82,7 @@ class TestStatesAndConstant(unittest.TestCase):
         self.assertEqual(s.shape, (100, 11))
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10], np.zeros((100)) + 1)
+        assert_equal(features.states_and_constant.feature_size(100, 50), 101)
 
 
 class TestStatesAndInputsAndConstant(unittest.TestCase):
@@ -102,6 +106,7 @@ class TestStatesAndInputsAndConstant(unittest.TestCase):
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10:13], u)
         assert_equal(s[:, 13], np.zeros((100)) + 1)
+        assert_equal(features.states_and_inputs_and_constant.feature_size(100, 50), 151)
 
 
 class TestGetPolynomial(unittest.TestCase):

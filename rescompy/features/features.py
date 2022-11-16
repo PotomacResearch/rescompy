@@ -39,6 +39,8 @@ def states_only(
     s = np.copy(r)    
     return s
 
+states_only.feature_size = lambda esn_size,input_dim: esn_size
+
 
 @numba.jit(nopython=True, fastmath=True)
 def states_and_inputs(
@@ -60,6 +62,8 @@ def states_and_inputs(
     s = np.copy(r)
     s = np.hstack((r, u))    
     return s
+
+states_and_inputs.feature_size = lambda esn_size,input_dim: esn_size+input_dim
 
 
 @numba.jit(nopython=True, fastmath=True)
@@ -84,6 +88,7 @@ def states_and_constant(
     s = np.hstack((s, const))    
     return s
 
+states_and_constant.feature_size = lambda esn_size,input_dim: 1+esn_size
 
 @numba.jit(nopython=True, fastmath=True)
 def states_and_inputs_and_constant(
@@ -107,6 +112,7 @@ def states_and_inputs_and_constant(
     s = np.hstack((s, const))    
     return s
 
+states_and_inputs_and_constant.feature_size = lambda esn_size,input_dim: 1+input_dim+esn_size
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))
 def get_polynomial(
