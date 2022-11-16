@@ -35,20 +35,9 @@ class TestStatesOnly(unittest.TestCase):
         
         # Compare to expected results.
         assert_equal(s, r)
+        assert_equal(features.states_only.feature_size(100, 50), 100)
 
-    def test_jacobian(self):
-        rng = default_rng(SEED)
-        num_inputs = 3
-        num_timesteps = 100
-        dim_res = 10
-
-        r = rng.uniform(size=(num_timesteps, dim_res))
-        u = rng.uniform(size=(num_timesteps,num_inputs))
-        dr_du = rng.uniform(size=(num_timesteps, dim_res, num_inputs))
-
-        dg_du = features.states_only.jacobian(dr_du, u)
-        self.assertEqual(dg_du.shape, (num_timesteps, dim_res, num_inputs))
-        assert_equal(dg_du, dr_du)
+        
                 
 
 class TestStatesAndInputs(unittest.TestCase):
@@ -71,6 +60,7 @@ class TestStatesAndInputs(unittest.TestCase):
         self.assertEqual(s.shape, (100, 13))
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10:], u)
+        assert_equal(features.states_and_inputs.feature_size(100, 50), 150)
 
     def test_jacobian(self):
         rng = default_rng(SEED)
@@ -113,6 +103,7 @@ class TestStatesAndConstant(unittest.TestCase):
         self.assertEqual(s.shape, (100, 11))
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10], np.zeros((100)) + 1)
+        assert_equal(features.states_and_constant.feature_size(100, 50), 101)
 
     def test_jacobian(self):
         rng = default_rng(SEED)
@@ -152,6 +143,7 @@ class TestStatesAndInputsAndConstant(unittest.TestCase):
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10:13], u)
         assert_equal(s[:, 13], np.zeros((100)) + 1)
+        assert_equal(features.states_and_inputs_and_constant.feature_size(100, 50), 151)
 
     def test_jacobian(self):
         rng = default_rng(SEED)
