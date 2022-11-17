@@ -755,8 +755,8 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Callable                                  = features.states_only,
-        regression:        Callable                                  = regressions.tikhonov(),
+        feature_function:  Union[Callable, features.Feature]         = features.StatesOnly(),
+        regression:        Callable         = regressions.tikhonov(),
         ) -> TrainResult:
         """The training method.
                 
@@ -908,7 +908,7 @@ class ESN:
                     logging.error('Regression function requires feature jacobian')
                 dr_du = _calc_dr_du(states_train, inputs_train, self.size, 
                     self.input_dimension, self.A, self.B, self.C, self.leaking_rate)
-                args['dg_du'] = feature_function.jacobian(dr_du, inputs_train)
+                args['dg_du'] = feature_function.jacobian(states_train, inputs_train, dr_du)
                 
         weights = regression(**args)
         

@@ -124,7 +124,7 @@ class TestCases(unittest.TestCase):
         # Train the ESN on the training signals.
         train_result = esn.train(200, inputs_train, 
                                  feature_function=
-                                 rescompy.features.states_and_inputs)
+                                 rescompy.features.StatesAndInputs())
         
         # Predict the signal in closed-loop configuration.
         predict_result = esn.predict(train_result, inputs=inputs_test,
@@ -167,7 +167,7 @@ class TestCases(unittest.TestCase):
         train_result = esn.train(1000, inputs_train,
                                  target_outputs_train,
                                  feature_function=
-                                 rescompy.features.get_polynomial())
+                                 rescompy.features.ConstantInputAndPolynomial(2))
                 
         # Predict the signal in open-loop configuration.
         predict_result = esn.predict(train_result, inputs=inputs_test,
@@ -208,8 +208,7 @@ class TestCases(unittest.TestCase):
         # Train the ESN on the training signals.
         train_result = esn.train(1000, inputs_train,
                                  target_outputs_train,
-                                 feature_function=
-                                 rescompy.features.states_only,
+                                 feature_function=rescompy.features.StatesOnly(),
                                  regression=regressions.jacobian(1e-6, 1e-6))
                 
         # Predict the signal in open-loop configuration.
