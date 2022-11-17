@@ -1,8 +1,10 @@
 import unittest
+import csv
 import logging
 import numba
 import os
 import numpy as np
+from scipy import sparse as sparse
 from numpy.random import default_rng
 from numpy.testing import assert_array_equal as assert_equal
 from numpy.testing import assert_array_almost_equal as assert_almost_equal
@@ -374,7 +376,46 @@ class TestESN(unittest.TestCase):
         for i in range(5):
             self.assertTrue(np.mean(train_result.rmse[i*100:i*100+10]) >
                             np.mean(train_result.rmse[i*100+10:(i+1)*100]))
+
+    def test_train_jacobian(self):
+        # """Test that the jacobian is calculated properly ."""
+
+        def _load(file):
+            name = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), 
+                'data', file)
+            res = []
+            with open(name) as csvfile:
+                reader = csv.reader(csvfile)
+                for row in reader:
+                    res.append([float(r) for r in row])
+            return np.array(res).T
+
         
+        # # Create the random state for reproducibility.
+        # rng = default_rng(SEED)
+        
+        # # Create a dummy ESN with a fixed seed.
+        esn = rescompy.ESN(64, 100, 10, 0.99, 1.0, 0.5, 0.25, SEED)
+        # set the A, B, and C matrices to known values
+        A = _load('A.csv').T
+        B = _load('B.csv').T
+        C = _load('C.csv')
+
+        inputs = _load('jacobian_target.csv')
+        D_ref = _load('jacobian_feature_derivatives.csv')
+        # reference feature includes other stuff besides the reservoir state
+        # also, we're going to throw out the first time step
+        states = _load('jacobian_features.csv')[1:,1:101]
+
+        # check that the intermediate D calculation is correct
+        D = rescompy._calc_D(states, inputs[:-1,:], 100, A, B, C)
+
+        # some slight differences in how the reference is calculated from 
+        # rescompy, so relax constraints
+        assert_almost_equal(D_ref[1:,:], D, decimal=2.5)  
+
+
     def test_predict(self):
         """Test the prediction method."""
         
@@ -421,6 +462,7 @@ class TestESN(unittest.TestCase):
                               feature_function=lambda r, u: r)
         assert_almost_equal(predict_result1.reservoir_outputs,
                             predict_result2.reservoir_outputs)
+
         
 
 class TestOptimizeHyperparameters(unittest.TestCase):
