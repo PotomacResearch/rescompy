@@ -570,11 +570,18 @@ class ESN:
         # Create the adjacency matrix A.
         def rvs(size):
             return rng.uniform(low=-1, high=1, size=size)
-        A = sparse.random(size, size, density=connections/size,
-                          random_state=rng, data_rvs=rvs)
-        v0 = rng.random(size)
-        eigenvalues, _ = splinalg.eigs(A, k=1, v0=v0)
-        A *= spectral_radius/np.abs(eigenvalues[0])
+        # TODO: This needs a better fix.
+        done = False
+        while not done:
+            try:
+                A = sparse.random(size, size, density=connections/size,
+                                  random_state=rng, data_rvs=rvs)
+                v0 = rng.random(size)
+                eigenvalues, _ = splinalg.eigs(A, k=1, v0=v0)
+                A *= spectral_radius/np.abs(eigenvalues[0])
+                done = True
+            except:
+                print ("failed to calculate SR, trying again...")
 
         # Create input matrix B.
         if isinstance(input_strength, float):
