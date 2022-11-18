@@ -175,8 +175,8 @@ def MRS_feature(
 def states_and_inputs_time_shifted(
         states_lookback_length:   int = 0,
         inputs_lookback_length:   int = 0,
-        inputs_decimation:        int = 1,
-        states_decimation:        int = 1 
+        states_decimation:        int = 1,
+        inputs_decimation:        int = 1 
     ):
     """The time-shifted states feature-getting function.
     
@@ -220,7 +220,7 @@ def states_and_inputs_time_shifted(
         raise(ValueError(msg))
     
     if (inputs_decimation > inputs_lookback_length and inputs_decimation > 1):
-        msg = "The inputs decimation time is larger than inputs_lookback_length."\
+        msg = "The inputs decimation time is larger than inputs_lookback_length. "\
 		      "Feature vectors will contain the current reservoir input only."
         logging.warning(msg)
 		
@@ -235,8 +235,20 @@ def states_and_inputs_time_shifted(
     def time_delayed(r, u):
         r = r.reshape((-1, r.shape[-1]))
         u = u.reshape((-1, u.shape[-1]))
-
-        if (u.shape[0] == r.shape[0]):
+        
+        if (r.shape[0] == states_lookback_length + 1 and
+			u.shape[0] == inputs_lookback_length + 1):
+            s = r[-1].reshape((1, -1))
+            for shift in range(states_decimation, states_lookback_length + 1,
+							   states_decimation):
+                s = np.hstack((s, r[-(shift+1)].reshape((1, -1))))
+            
+            s = np.hstack((s, u[-1].reshape((1, -1))))
+            for shift in range(inputs_decimation, inputs_lookback_length + 1,
+							   inputs_decimation):
+                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
+        
+        else:
             s = r[lookback_length:]
             for shift in range(states_decimation, states_lookback_length + 1,
 							   states_decimation):
@@ -246,17 +258,6 @@ def states_and_inputs_time_shifted(
             for shift in range(inputs_decimation, inputs_lookback_length + 1,
 							   inputs_decimation):
                 s = np.hstack((s, u[lookback_length-shift:-shift]))
-        
-        else:
-            s = r[states_lookback_length:]
-            for shift in range(states_decimation, states_lookback_length + 1,
-							   states_decimation):
-                s = np.hstack((s, r[states_lookback_length-shift:-shift]))
-            
-            s = np.hstack((s, u[inputs_lookback_length:]))
-            for shift in range(inputs_decimation, inputs_lookback_length + 1,
-							   inputs_decimation):
-                s = np.hstack((s, u[inputs_lookback_length-shift:-shift]))
         
         return s
     
