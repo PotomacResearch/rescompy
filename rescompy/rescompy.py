@@ -1590,8 +1590,6 @@ class ESN:
 							  'lookback_states')
             utils.check_range(lookback_states.shape[0], "lookback_states length",
 							  states_lookback_length, 'eq', True)
-            #if not lookback_states.data.contiguous:
-            #       lookback_states = np.ascontiguousarray(lookback_states)
             if(resync_signal is not None):
                 msg = "lookback_states and a resync_signal are both provided. " \
 	                    "lookback_states will be ignored and calculated from " \
@@ -1602,9 +1600,7 @@ class ESN:
                     msg = "lookback_states and an initial_state are provided " \
 	                    "but the final lookback_state does not match the " \
 	                    "initial_state and will be replaced by initial_state."
-                    logging.warning(msg)    
-        #else:
-        #    lookback_states = np.zeros((states_lookback_length + 1, self.size))
+                    logging.warning(msg)
 			
         if lookback_inputs is not None:
             if (inputs is None):
@@ -1617,8 +1613,6 @@ class ESN:
 				#			  'lookback_inputs')
                 #utils.check_range(lookback_inputs.shape[0], "lookback_inputs length",
 				#			  inputs_lookback_length, 'eq', True)
-            #if not lookback_inputs.data.contiguous:
-	        #    lookback_inputs = np.ascontiguousarray(lookback_states)
             if(resync_signal is not None):
                 msg = "lookback_inputs and a resync_signal are both provided. " \
 	                    "lookback_inputs will be ignored and calculated from " \
@@ -1693,9 +1687,6 @@ class ESN:
             # Calculate initial output.
             initial_output = feature_function(lookback_states,
                                           lookback_inputs) @ weights
-
-            #lookback_states = lookback_states[1:]
-            #lookback_inputs = lookback_inputs[1:]
             
             # Allocate memory for states and outputs.
             states = initial_state.repeat(predict_length + 1, axis=0)
