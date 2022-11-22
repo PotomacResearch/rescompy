@@ -1703,7 +1703,7 @@ class ESN:
             feedbacks = initial_input.repeat(predict_length + 1, axis=0)
             states = np.concatenate((lookback_states, states[1:]), axis = 0)
             feedbacks = np.concatenate((lookback_inputs, feedbacks[1:]), axis = 0)
-            print("Right Rescompy")
+
             # Try first to use the jitted version of _get_states_autonomous for
             # faster performance.
             try: 
