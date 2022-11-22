@@ -20,7 +20,7 @@ from pydantic import validate_arguments
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-class Feature(ABC):
+class ESNFeature(ABC):
     """ 
     The Feature Abstract Base Class
     If you want to use a class (instead of just a Callable), the 
@@ -84,14 +84,16 @@ class Feature(ABC):
     def feature_size(self, esn_size:int, input_dim:int):
         pass
 
-
-class StatesOnly(Feature):
+class StatesOnly(ESNFeature):
     """The States-only Feature function.
     Simply returns the reservoir state, unaltered."""
     @staticmethod
     def __call__(r: np.ndarray, u: np.ndarray):
         s = np.copy(r)    
         return s
+
+    def __init__(self):
+        self.compiled = numba.njit(lambda r, u: np.copy(r))
     
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -101,15 +103,18 @@ class StatesOnly(Feature):
     def feature_size(esn_size:int, input_dim: int):
         return esn_size
 
-class StatesAndInputs(Feature):
+class StatesAndInputs(ESNFeature):
     """The States-and-Inputs Feature function.
     
     Concatenates the reservoir states with the inputs."""
-
     @staticmethod
     def __call__(r: np.ndarray, u: np.ndarray):
         s = np.hstack((r, u))    
         return s
+
+    def __init__(self):
+        self.compiled = numba.njit(lambda r, u: np.hstack((r, u)))
+
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -122,7 +127,7 @@ class StatesAndInputs(Feature):
     def feature_size(esn_size,input_dim): 
         return esn_size+input_dim
 
-class StatesAndConstant(Feature):
+class StatesAndConstant(ESNFeature):
     """The States-and-Constant Feature function.
     
     Concatenates the reservoir states with a constant. """
@@ -132,6 +137,9 @@ class StatesAndConstant(Feature):
         const = np.zeros((r.shape[0], 1)) + 1
         s = np.hstack((s, const))    
         return s
+                
+    def __init__(self):
+        self.compiled = numba.njit(lambda r, u: np.hstack((r, np.zeros((r.shape[0], 1)) + 1)))
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -144,7 +152,7 @@ class StatesAndConstant(Feature):
     def feature_size(esn_size,input_dim): 
         return 1+esn_size
 
-class StatesAndInputsAndConstant(Feature):
+class StatesAndInputsAndConstant(ESNFeature):
     """The States-and-Inputs-and-Constant Feature function.
     
     Concatenates the reservoir states with the inputs and a constant."""
@@ -154,6 +162,9 @@ class StatesAndInputsAndConstant(Feature):
         const = np.zeros((r.shape[0], 1)) + 1
         s = np.hstack((s, const))    
         return s
+
+    def __init__(self):
+        self.compiled = numba.njit(lambda r, u: np.hstack((r, u, np.zeros((r.shape[0], 1)) + 1)))
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -168,7 +179,7 @@ class StatesAndInputsAndConstant(Feature):
         return 1+input_dim+esn_size
 
 @dataclass
-class ConstantInputAndPolynomial(Feature):
+class ConstantInputAndPolynomial(ESNFeature):
     """The Polynomial Feature-getting function.
     
     Returns feature function that returns a concatenation of
