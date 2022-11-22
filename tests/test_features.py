@@ -33,10 +33,12 @@ class TestStatesOnly(unittest.TestCase):
         # Grab the feature vectors.
         g = features.StatesOnly()
         s = g(r, u)
+        tmp = g.compiled
         
         # Compare to expected results.
         assert_equal(s, r)
         assert_equal(g.feature_size(100, 50), 100)
+        assert_equal(s, tmp(r,u))
 
         
                 
@@ -63,6 +65,7 @@ class TestStatesAndInputs(unittest.TestCase):
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10:], u)
         assert_equal(g.feature_size(100, 50), 150)
+        assert_equal(s, g.compiled(r,u))
 
     def test_jacobian(self):
         rng = default_rng(SEED)
@@ -104,6 +107,7 @@ class TestStatesAndConstant(unittest.TestCase):
         assert_equal(s[:, :10], r)
         assert_equal(s[:, 10], np.zeros((100)) + 1)
         assert_equal(g.feature_size(100, 50), 101)
+        assert_equal(s, g.compiled(r,u))
 
     def test_jacobian(self):
         rng = default_rng(SEED)
@@ -145,6 +149,7 @@ class TestStatesAndInputsAndConstant(unittest.TestCase):
         assert_equal(s[:, 10:13], u)
         assert_equal(s[:, 13], np.zeros((100)) + 1)
         assert_equal(g.feature_size(100, 50), 151)
+        assert_equal(s, g.compiled(r,u))
 
     def test_jacobian(self):
         rng = default_rng(SEED)
