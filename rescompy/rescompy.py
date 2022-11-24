@@ -1740,7 +1740,11 @@ class ESN:
                     feature_function_jit = feature_function
                 else:
                     # it has not, let's try to compile it
-                    feature_function_jit = _compile_feature_function(feature_function)
+                    feature_function_jit = _compile_feature_function(
+						feature_function,
+						states_lookback_length,
+						inputs_lookback_length
+						)
 
             if feature_function_jit is not None:
                 # For speed and successful jitting in certain cases, ensure that
@@ -1768,7 +1772,9 @@ class ESN:
                 logging.warning("Using non-compiled autonomous state propagation.")
                 states, outputs = _get_states_autonomous(inputs, outputs,
                               states, feedbacks, feature_function,
-                              mapper, self.A.data, self.A.indices,
+                              mapper, states_lookback_length,
+							  inputs_lookback_length,
+							  self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
         
@@ -2039,12 +2045,17 @@ def _get_states_driven(
     return r[1:]
 
 
-def _compile_feature_function(feature_function):
+def _compile_feature_function(
+		feature_function,
+		states_lookback_length = 0,
+		inputs_lookback_length = 0,
+		):
     try: 
         # If function is not jitted, attempt to jit it and verify it works.
         feature_function_jit = numba.jit(nopython=True,
                                     fastmath=True)(feature_function)
-        _ = feature_function_jit(np.zeros((1,10)), np.zeros((1,3)))
+        _ = feature_function_jit(np.zeros((states_lookback_length + 1, 10)),
+								 np.zeros((inputs_lookback_length + 1, 3)))
         msg = "Successfully compiled feature_function."
         logging.info(msg)
         return feature_function_jit
