@@ -326,6 +326,62 @@ class TestCases(unittest.TestCase):
         
         self.assertTrue(kink_measure < 1)
 
+
+    def test_lorenz_partial_feedback_with_lookbacks(self):
+        """Execute a Lorenz control problem where the z-component is fed back
+        during prediction, but x and y are still provided as inputs. This time,
+		include time-delayed states and inputs in the feature vectors.
+        """
+        
+        # Create a Lorenz signal.
+        # Partition into inputs, outputs, training, and testing.
+        u = rescompy.benchmarks.get_lorenz(return_length=10000,
+                                           seed=SEED)
+        u = rescompy.Standardizer(u).standardize(u)
+        inputs_train = u[:5000-1]
+        target_outputs_train = u[1:5000]
+        inputs_test = u[5000-1:10000-1, :2]
+        target_outputs_test = u[5000:]
+        
+        # Create an ESN with a fixed seed.
+        esn = rescompy.ESN(3, 1000, 10, 0.59, 0.63, 0.13, 0.09, SEED)
+        
+        feature_function = rescompy.features.StatesAndInputsTimeShifted(
+			states_lookback_length = 2,
+			inputs_lookback_length = 2,
+			states_decimation = 1,
+			inputs_decimation = 1
+			)
+        # Train the ESN on the training signals.
+        train_result = esn.train(1000, inputs = inputs_train,
+                                 target_outputs = target_outputs_train,
+								 feature_function = feature_function)
+                
+        # Define an observer mapper function.
+        @numba.jit(nopython=True, fastmath=True)
+        def mapper(inputs, outputs):
+            return np.concatenate((inputs, outputs[2:]))
+        
+        # Predict the signal in open-loop configuration.
+        predict_result = esn.predict(train_result, inputs=inputs_test,
+                                     target_outputs = target_outputs_test,
+                                     mapper =  mapper)
+        
+        # Even though we are providing inputs, this approach to the problem
+        # tends to be less stable, so let's only ensure that we are valid for
+        # about one Lyapunov time.
+        self.assertTrue(predict_result.unit_valid_length > 100)
+        
+        # A tell-tale sign of an indexing problem is a 'kink' in the error just
+        # after prediction starts. Confirm that the error is smooth around
+        # here.
+        transition_error = np.concatenate((train_result.rmse[-10:],
+                                           predict_result.rmse[:10]))
+        kink_measure = np.sqrt(np.var(transition_error))/ \
+            np.mean(transition_error)
+        
+        self.assertTrue(kink_measure < 1)
+
         
     def test_lorenz_batch_resync(self):
         """Train an ESN on a batch of Lorenz signals with slightly different

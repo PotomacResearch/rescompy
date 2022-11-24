@@ -250,16 +250,22 @@ class TrainResult:
             weights (np.ndarray): The array of output weights.
         """
 		
-        #Update these shape checks
         #Check for shape consistencies.
-        #features = feature_function(states[0], inputs[0])
-        #utils.check_shape(inputs[0].shape, (states[0].shape[0], None),
-        #                  'inputs')
-        #utils.check_shape(target_outputs[0].shape,
-        #                  (states[0].shape[0], None), 'target_outputs')
-        #utils.check_shape(weights.shape, (features.shape[1],
-        #                                  target_outputs[0].shape[1]),
-        #                  'weights')
+        for task_ind in range(len(inputs)):
+            features = feature_function(states[task_ind], inputs[task_ind])
+            utils.check_shape(inputs[task_ind].shape,
+							  (states[task_ind].shape[0], None), 'inputs')
+            utils.check_shape(weights.shape,
+							  (features.shape[1], target_outputs[0].shape[1]),
+							  'weights')
+            if (target_outputs[task_ind].shape[0] > 1):
+                utils.check_shape(target_outputs[task_ind].shape,
+								  (states[task_ind].shape[0], None), 'target_outputs')
+
+            else:
+                utils.check_range(features.shape[0],
+								  "The number of feature vectors per input signal",
+								  1, 'eq', True)
         
         # Assign attributes.
         self.feature_function = feature_function
@@ -374,18 +380,20 @@ class PredictResult:
             inputs.
         reservoir_states (np.ndarray): The reservoir states over the prediction
             period.
-        target_outputs (np.ndarray): The target outputs.
-            The first axis must have the same length as the first axis of
-            inputs.
         predict_length (int): The length of the prediction period. If zero,
 		    a classification-style task with a single output 
 			vector is assumed.
+        target_outputs (np.ndarray): The target outputs.
+            The first axis must have the same length as the first axis of
+            inputs.
         resync_inputs (np.ndarray): The inputs used to re-synchronize the
             reservoir state.
         resync_states (np.ndarray): The reservoir states subject to the
             resynchronization signal.
             The first axis must have the same length as the first axis of
             resync_inputs.
+        resync_outputs (np.ndarray): The reservoir outputs over the
+            resynchronization period.
     """
     
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
@@ -885,14 +893,19 @@ class ESN:
                               discarded for each sample input signal.
 							  If a single int is provided, it will be the 
 							  transient length for all sample inputs.
-            inputs: An array of ESN inputs.
-                    The first dimension is the number of samples, and the
-                    second dimension must be equal to self.input_dimension.
-            target_outputs: An array of desired ESN outputs.
-                            The first dimension is the number of samples and
-                            must be equal to the first dimension of inputs.
+            inputs: An array of ESN inputs, or a list of such arrays.
+                    For each array the first dimension is the number of 
+                    samples, and the second dimension must be equal to 
+					self.input_dimension.
+            target_outputs: An array of desired ESN outputs, or a list of such
+							arrays.
+                            The first dimension of each array is the number of 
+							samples and must be equal to the first dimension of
+							inputs.
                             If not provided, it is assumed that we are trying
                             to predict the inputs.
+			initial_state: The initial reservoir state at the start of each
+						   training task.
             feature_function: The function that forms the feature vectors from
                               the reservoir states.
             regression: The optimizer that minimizes the difference between
@@ -1087,21 +1100,26 @@ class ESN:
                               discarded for each sample input signal.
 							  If a single int is provided, it will be the 
 							  transient length for all sample inputs.
-            inputs: An array of ESN inputs.
-                    The first dimension is the number of samples, and the
-                    second dimension must be equal to self.input_dimension.
-            target_outputs: An array of desired ESN outputs.
-                            The first dimension is the number of samples and
-                            must be equal to the first dimension of inputs.
+            inputs: An array of ESN inputs, or a list of such arrays.
+                    For each array the first dimension is the number of 
+                    samples, and the second dimension must be equal to 
+					self.input_dimension.
+            target_outputs: An array of desired ESN outputs, or a list of such
+							arrays.
+                            The first dimension of each array is the number of 
+							samples and must be equal to the first dimension of
+							inputs.
                             If not provided, it is assumed that we are trying
                             to predict the inputs.
+			initial_state: The initial reservoir state at the start of each
+						   training task.
             feature_function: The function that forms the feature vectors from
                               the reservoir states.
             regression: The optimizer that minimizes the difference between
                         features and target_outputs. Must take as its arguments
 						the matrices VS_T and SS_T where V is the matrix of 
 						targets and S the matrix of features.
-            batch_size (int): The number of samples ESN inputs to process
+            batch_size (int): The number of sample ESN inputs to process
                         before each update to the regression matrices.
             accessible_drives (str, int, list): The training signals whose
                         associated states and inputs objects will be available
@@ -1294,8 +1312,7 @@ class ESN:
         dg_du:             Optional[np.ndarray]                      = None,
         feature_function:  Union[Callable, features.Feature]         = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.tikhonov(),
-        batch_size:        int                                       = 10,
-		accessible_drives: Union[int, List[int], str]                = "all",
+        accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
         """The training method.
                 
@@ -1304,14 +1321,19 @@ class ESN:
                               discarded for each sample input signal.
 							  If a single int is provided, it will be the 
 							  transient length for all sample inputs.
-            inputs: An array of ESN inputs.
-                    The first dimension is the number of samples, and the
-                    second dimension must be equal to self.input_dimension.
-            target_outputs: An array of desired ESN outputs.
-                            The first dimension is the number of samples and
-                            must be equal to the first dimension of inputs.
+            inputs: An array of ESN inputs, or a list of such arrays.
+                    For each array the first dimension is the number of 
+                    samples, and the second dimension must be equal to 
+					self.input_dimension.
+            target_outputs: An array of desired ESN outputs, or a list of such
+							arrays.
+                            The first dimension of each array is the number of 
+							samples and must be equal to the first dimension of
+							inputs.
                             If not provided, it is assumed that we are trying
                             to predict the inputs.
+			initial_state: The initial reservoir state at the start of each
+						   training task.
             feature_function: The function that forms the feature vectors from
                               the reservoir states.
             regression: The optimizer that minimizes the difference between
@@ -1507,6 +1529,19 @@ class ESN:
                               the reservoir states.
                               Only used if weights are provided in place of
                               train_result.
+            lookback_states: Reservoir states prior to the prediction period to
+							 to be used when the feature function requires 
+							 time-delayed states. Must have shape
+							 (feature_function.states_lookback_length + 1,
+							  self.size)
+            lookback_inputs: Reservoir inputs prior to the prediction period to 
+							 use with feature functions that require 
+							 time-delayed inputs. May also be used to provide 
+							 an initial input for a feature function that 
+							 requires only the current reservoir input.
+							 Must have shape
+							 (feature_function.inputs_lookback_length + 1,
+							  self.input_dimension).
 		
         Returns:
             result: The computed prediction result.
@@ -1537,7 +1572,7 @@ class ESN:
         
         if predict_length == 0:
             if target_outputs is not None:
-                utils.check_shape(target_outputs.shape, (None, 1),
+                utils.check_shape(target_outputs.shape, (1, None),
 								  'target_outputs')
             if inputs is None:
                 msg = "predict_length is zero but no inputs are provided."\
@@ -1589,7 +1624,7 @@ class ESN:
             utils.check_shape(lookback_states.shape, (None, self.size),
 							  'lookback_states')
             utils.check_range(lookback_states.shape[0], "lookback_states length",
-							  states_lookback_length, 'eq', True)
+							  states_lookback_length + 1, 'eq', True)
             if(resync_signal is not None):
                 msg = "lookback_states and a resync_signal are both provided. " \
 	                    "lookback_states will be ignored and calculated from " \
@@ -1603,22 +1638,16 @@ class ESN:
                     logging.warning(msg)
 			
         if lookback_inputs is not None:
-            if (inputs is None):
-                utils.check_shape(lookback_inputs.shape, (None, self.input_dimension),
-							  'lookback_inputs')
-                #utils.check_range(lookback_inputs.shape[0], "lookback_inputs length",
-				#			  inputs_lookback_length, 'eq', True)
-            #else:
-                #utils.check_shape(lookback_inputs.shape, (None, inputs.shape[1]),
-				#			  'lookback_inputs')
-                #utils.check_range(lookback_inputs.shape[0], "lookback_inputs length",
-				#			  inputs_lookback_length, 'eq', True)
             if(resync_signal is not None):
                 msg = "lookback_inputs and a resync_signal are both provided. " \
 	                    "lookback_inputs will be ignored and calculated from " \
 	                    "the resynchronization period instead."
                 logging.warning(msg)
-                
+            else:
+                utils.check_shape(lookback_inputs.shape,
+								  (None, self.input_dimension), 'lookback_inputs')
+                utils.check_range(lookback_inputs.shape[0], "lookback_inputs length",
+							  inputs_lookback_length + 1, 'eq', True)
 
         # If a resync signal is given:
         # - if no initial state is given, reset the reservoir to all zero state and
@@ -1632,8 +1661,10 @@ class ESN:
                 resync_states = self.get_states(initial_state, resync_signal)
             
             resync_outputs = feature_function(resync_states, resync_signal) @ weights
-            lookback_states = resync_states[-(states_lookback_length + 1):].reshape((-1, self.size))
-            lookback_inputs = resync_signal[-(inputs_lookback_length + 1):].reshape((-1, self.input_dimension))
+            lookback_states = resync_states[-(states_lookback_length + 1):
+											].reshape((-1, self.size))
+            lookback_inputs = resync_signal[-(inputs_lookback_length + 1):
+											].reshape((-1, self.input_dimension))
    
         elif initial_state is not None:
             # Next, prioritize using a provided initial state.

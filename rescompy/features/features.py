@@ -439,13 +439,13 @@ class FinalStateOnly(Feature):
     """
 
     @staticmethod
-    def __call__(self, r : np.ndarray, u : np.ndarray):
+    def __call__(r : np.ndarray, u : np.ndarray):
         r = r.reshape((-1, r.shape[-1]))
-        s = np.copy(r[-1]) 
+        s = np.copy(r[-1].reshape(1, -1)) 
         return s
 
     @staticmethod	
-    def feature_size(self, esn_size: int, signal_length: int):
+    def feature_size(esn_size: int, signal_length: int):
         return esn_size
 
     @staticmethod
