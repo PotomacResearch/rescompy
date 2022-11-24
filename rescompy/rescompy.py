@@ -882,7 +882,7 @@ class ESN:
         inputs:            Union[np.ndarray, List[np.ndarray]],
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.Feature]         = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_length:      int                                       = 100,
         ) -> TrainResult:
@@ -1088,7 +1088,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.Feature]         = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_size:        int                                       = 10,
         accessible_drives: Union[int, List[int], str]                = "all",
@@ -1310,7 +1310,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.Feature]         = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.tikhonov(),
         accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
@@ -1659,7 +1659,7 @@ class ESN:
                 	resync_states = self.get_states(np.zeros(self.size), resync_signal)
             else:
                 resync_states = self.get_states(initial_state, resync_signal)
-            
+
             resync_outputs = feature_function(resync_states, resync_signal) @ weights
             lookback_states = resync_states[-(states_lookback_length + 1):
 											].reshape((-1, self.size))
@@ -1718,18 +1718,31 @@ class ESN:
             # Calculate initial output.
             initial_output = feature_function(lookback_states,
                                           lookback_inputs) @ weights
-            
+
             # Allocate memory for states and outputs.
             states = initial_state.repeat(predict_length + 1, axis=0)
             outputs = initial_output.repeat(predict_length + 1, axis=0)
             feedbacks = initial_input.repeat(predict_length + 1, axis=0)
             states = np.concatenate((lookback_states, states[1:]), axis = 0)
             feedbacks = np.concatenate((lookback_inputs, feedbacks[1:]), axis = 0)
+                        
+            # are we using the compiled autonomous propagation function?
+            feature_function_jit = None
 
-            # Try first to use the jitted version of _get_states_autonomous for
-            # faster performance.
-            try: 
+            # what type of feature function are we dealing with?
+            if isinstance(feature_function, features.ESNFeature) \
+				and hasattr(feature_function, 'compiled'):
+                feature_function_jit = feature_function.compiled
+            else:
+                # it's a callable; has it already been jitted?
+                if hasattr(feature_function, 'inspect_llvm'):
+                    # it has, grab the already jitted function.
+                    feature_function_jit = feature_function
+                else:
+                    # it has not, let's try to compile it
+                    feature_function_jit = _compile_feature_function(feature_function)
 
+            if feature_function_jit is not None:
                 # For speed and successful jitting in certain cases, ensure that
                 # the data arrays are contiguous.
                 if not inputs.data.contiguous:
@@ -1739,19 +1752,7 @@ class ESN:
                 if not states.data.contiguous:
                     states = np.ascontiguousarray(states)
                 if not feedbacks.data.contiguous:
-                    feedbacks = np.ascontiguousarray(feedbacks)				
-
-                # If function is not jitted, attempt to jit it and verify it works.
-                if not hasattr(feature_function, 'inspect_llvm'):
-                    feature_function_jit = numba.jit(nopython=True,
-                                           fastmath=True)(feature_function)
-                    _ = feature_function_jit(states, feedbacks)
-                    msg = "Successfully compiled feature_function."
-                    logging.info(msg)
-                
-                # Otherwise, grab the already jitted function.
-                else:
-                    feature_function_jit = feature_function
+                    feedbacks = np.ascontiguousarray(feedbacks)
             
                 # If successful, calculate states and outputs using the compiled
                 # state propagation function.
@@ -1763,20 +1764,13 @@ class ESN:
                               self.A.indptr, self.A.shape, self.B, self.C,
                               weights, self.leaking_rate)
             
-            # If function is not jittable or for some other reason does not run
-            # with the jitted _get_states_autonomous, 
-            except (TypeError, numba.UnsupportedError):
-                msg = "Could not compile the autonomous state " \
-                      "propagation function. Trying a non-compiled " \
-                      "version instead."
-                logging.warning(msg)
-                states, outputs = _get_states_autonomous(inputs, 
-                              outputs, states, feedbacks, feature_function,
-                              mapper, states_lookback_length,
-                              inputs_lookback_length,
-                              self.A.data, self.A.indices,
+            else:
+                logging.warning("Using non-compiled autonomous state propagation.")
+                states, outputs = _get_states_autonomous(inputs, outputs,
+                              states, feedbacks, feature_function,
+                              mapper, self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
-                              weights, self.leaking_rate)  
+                              weights, self.leaking_rate)
         
         if resync_signal is None:
             return PredictResult(inputs, outputs, states, predict_length,
@@ -2044,6 +2038,22 @@ def _get_states_driven(
             + C)
     return r[1:]
 
+
+def _compile_feature_function(feature_function):
+    try: 
+        # If function is not jitted, attempt to jit it and verify it works.
+        feature_function_jit = numba.jit(nopython=True,
+                                    fastmath=True)(feature_function)
+        _ = feature_function_jit(np.zeros((1,10)), np.zeros((1,3)))
+        msg = "Successfully compiled feature_function."
+        logging.info(msg)
+        return feature_function_jit
+    except (TypeError, numba.UnsupportedError):
+        # If function is not jittable or for some other reason does not run
+        # with the jitted _get_states_autonomous, 
+        msg = "Could not compile the autonomous state propagation function."
+        logging.warning(msg)
+        return None
 
 def _get_states_autonomous(
     u:                       np.ndarray,
