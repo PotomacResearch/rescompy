@@ -32,6 +32,7 @@ from pydantic import validate_arguments
 from .utils import utils
 from .features import features
 from .regressions import regressions
+import functools
 
 
 # Ignore unhelpful numba performance warnings.
@@ -197,12 +198,25 @@ class TrainResult:
     properties of interest.
     
     Attributes:
+        listed_states (list): Each entry contains the set of reservoir    
+		    states over the training period, including the initial transient,
+			for the corresponding training task.
+        listed_inputs (list): Each entry contains reservoir inputs over   
+		    the training period, including the initial transient, for the 
+            corresponding training task.
+        listed_targets (list): The list of target_outputs stored during the
+		    training stage. Each entry corresponds to the targets for a 
+			different training task/input signal.
+        listed_transients (list): The transient lengths for each training task
+            stored in a list.
         states (np.ndarray): The set of reservoir states over the training
-            period, including the initial transient.
-        inputs (np.ndarray): The reservoir inputs.
+            period, including the initial transient(s), stored in a single 
+			array. The concatenation of all entries in listed_states. 
+        inputs (np.ndarray): The concatenation of all entries in listed_inputs.
             The first axis must have the same length as the first axis of
             states.
-        target_outputs (np.ndarray): The target outputs.
+        target_outputs (np.ndarray): The concatenation of all entries in
+            listed_targets. 
             The first axis must have the same length as the first axis of
             states.
         feature_function (Callable): The function that transforms the states
@@ -216,10 +230,10 @@ class TrainResult:
         self,
         states:            List[np.ndarray],
         inputs:            List[np.ndarray],
-        target_outputs:    Union[List[None],  List[np.ndarray]],
+        target_outputs:    List[np.ndarray],
         transient_lengths: List[int],
         accessible_drives: List[int],
-        feature_function:  Callable,
+        feature_function:  Union[features.ESNFeature, Callable],
         weights:           np.ndarray,
         jacobian:          Optional[np.ndarray] = None
         ):
@@ -318,17 +332,20 @@ class TrainResult:
         """The features property.
         Computes the reservoir features from the states and inputs using the
         feature_function."""
-        features = None
-        for task_ind in range(len(self.listed_inputs)):
-            if (features is None):
-                features = self.feature_function(self.listed_states[task_ind],
+
+        num_inputs = len(self.listed_inputs)		
+        listed_features = [self.feature_function(self.listed_states[task_ind],
 												 self.listed_inputs[task_ind])
-            else:
-                features = np.concatenate((features,
-					self.feature_function(self.listed_states[task_ind],
-					self.listed_inputs[task_ind])), axis = 0)
+						   for task_ind in range(num_inputs)]
+
+        if (num_inputs > 1):
+            features = functools.reduce(
+			    lambda x, y : np.concatenate((x, y), axis = 0),
+				listed_features)
+        else: features = listed_features[0]
+        
         return features
-    
+
     @property
     def reservoir_outputs(self):
         """The reservoir outputs property.
@@ -482,8 +499,11 @@ class PredictResult:
         
         if self.predict_length != 0:
             msg = "component_errors are not defined for single-target " \
-				"time-series prediction tasks. Call rmse or nrmse instead."
-            logging.error(msg)      
+				"time-series prediction tasks. Call rmse or nrmse instead." \
+				" Returning NaN."
+            logging.warning(msg)
+            return np.nan
+		   
         elif self.target_outputs is not None:
             return np.sqrt(np.mean(np.square(self.reservoir_outputs
                                              - self.target_outputs), axis=1))
@@ -522,9 +542,11 @@ class PredictResult:
         Is only defined when target_outputs are provided."""
         
         if self.predict_length == 0:
-            msg = "NRMSE is not defined for single-target mappings with " \
-				"predict_length zero. Call component_wise_error or error instead."
-            logging.error(msg)
+            msg = "nrmse not defined for single-target mappings with " \
+				"predict_length zero. Call component_wise_error or rmse instead." \
+				" Returning NaN."
+            logging.warning(msg)
+            return np.nan
         
         elif self.target_outputs is not None:
             
@@ -549,8 +571,9 @@ class PredictResult:
         if(self.predict_length > 0): return self.valid_length(1.0, True)
         else:
             msg = "unit_valid_length is not defined for single-target mapping" \
-				" tasks with predict_length equal to zero"
-            logging.error(msg)
+				" tasks with predict_length equal to zero. Returning NaN."
+            logging.warning(msg)
+            return np.nan
             
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def valid_length(
@@ -604,8 +627,9 @@ class PredictResult:
 
         else:
             msg = "valid_length is not defined for single-target mapping tasks" \
-				" with predict_length equal to zero"
-            logging.error(msg)
+				" with predict_length equal to zero. Returning NaN."
+            logging.warning(msg)
+            return np.nan
                 
             
     def __repr__(self):
@@ -887,6 +911,11 @@ class ESN:
         batch_length:      int                                       = 100,
         ) -> TrainResult:
         """The training method.
+		For use with regression functions that accept the regression matrices
+		SS_T and VS_T as arguments. These matrices are incremented every 
+		batch_length time steps to save memory. This training function does not
+		allow training for classification-style tasks in which feature vectors 
+		are formed from states over the entire drive period.
                 
         Args:
             transient_length: The length of the initial transient to be
@@ -1093,7 +1122,10 @@ class ESN:
         batch_size:        int                                       = 10,
         accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
-        """The training method.
+        """The batch training method.
+		For use with regression functions that accept the regression matrices
+		SS_T and VS_T as arguments. These matrices are incremented every 
+		batch_size training signals to save memory.
                 
         Args:
             transient_lengths: The length of the initial transient to be
@@ -1315,6 +1347,12 @@ class ESN:
         accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
         """The training method.
+		For use with general regression functions that accept a combination of  
+		the inputs (u), features (s), targets (v), feature_function (g), or 
+		Jacobian (dg_du) as argument. The features, inputs, and targets over 
+		the entire training period are stored until training has finished. To 
+		save memory during training, the train_batched or train_saving_memory 
+		routines may be used instead.
                 
         Args:
             transient_lengths: The length of the initial transient to be
@@ -1728,6 +1766,7 @@ class ESN:
                         
             # are we using the compiled autonomous propagation function?
             feature_function_jit = None
+            mapper_jit = None
 
             # what type of feature function are we dealing with?
             if isinstance(feature_function, features.ESNFeature) \
@@ -1746,7 +1785,14 @@ class ESN:
 						inputs_lookback_length
 						)
 
-            if feature_function_jit is not None:
+            if hasattr(mapper, 'inspect_llvm'):
+                # it has, grab the already jitted function.
+                mapper_jit = mapper
+            else:
+                # it has not, let's try to compile it
+                mapper_jit = _compile_mapper(mapper)
+
+            if feature_function_jit is not None and mapper_jit is not None:
                 # For speed and successful jitting in certain cases, ensure that
                 # the data arrays are contiguous.
                 if not inputs.data.contiguous:
@@ -1762,7 +1808,7 @@ class ESN:
                 # state propagation function.
                 states, outputs = _get_states_autonomous_jit(inputs, 
                               outputs, states, feedbacks, feature_function_jit,
-                              mapper, states_lookback_length,
+                              mapper_jit, states_lookback_length,
                               inputs_lookback_length,
 							  self.A.data, self.A.indices,
                               self.A.indptr, self.A.shape, self.B, self.C,
@@ -2059,6 +2105,21 @@ def _compile_feature_function(
         msg = "Successfully compiled feature_function."
         logging.info(msg)
         return feature_function_jit
+    except (TypeError, numba.UnsupportedError):
+        # If function is not jittable or for some other reason does not run
+        # with the jitted _get_states_autonomous, 
+        msg = "Could not compile the autonomous state propagation function."
+        logging.warning(msg)
+        return None
+	
+def _compile_mapper(	mapper):
+    try: 
+        # If function is not jitted, attempt to jit it and verify it works.
+        mapper_jit = numba.jit(nopython=True, fastmath=True)(mapper)
+        _ = mapper_jit(np.zeros(4), np.zeros(3))
+        msg = "Successfully compiled mapper function."
+        logging.info(msg)
+        return mapper_jit
     except (TypeError, numba.UnsupportedError):
         # If function is not jittable or for some other reason does not run
         # with the jitted _get_states_autonomous, 

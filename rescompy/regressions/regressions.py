@@ -146,7 +146,7 @@ def batched_ridge(
         A function that performs a ridge regression
         that takes 
             SS_T (np.ndarray): The feature vectors information matrix
-            YS_T (np.ndarray): The targets and features information matrix
+            VS_T (np.ndarray): The targets and features information matrix
         and returns
             W (np.ndarray): The fitted weights
     """
