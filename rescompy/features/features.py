@@ -228,8 +228,20 @@ class ConstantInputAndPolynomial(StandardFeature):
     Returns:
         s (np.ndarray): The feature vectors.
     """
-    degree: int = 2
-	
+
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))
+    def __init__ (self, degree: int = 2):
+        self.degree = degree
+		
+        def inner(r : np.ndarray, u : np.ndarray):
+            const = np.zeros((r.shape[0], 1)) + 1
+            s = np.hstack((const, u, r))
+            for poly_ind in range(2, degree+1):
+	            s = np.concatenate((s, r**poly_ind), axis=1)
+            return s
+
+        self.compiled = numba.njit(inner)
+    
     def __call__(self, r, u):
         const = np.zeros((r.shape[0], 1)) + 1
         s = np.hstack((const, u, r))
@@ -275,190 +287,6 @@ class FinalStateOnly(StandardFeature):
         raise NotImplementedError()
 
 
-@validate_arguments(config=dict(arbitrary_types_allowed=True))
-def MixedReservoirStates(
-        decimation:        int = 1,
-        max_num_states:    int = 10  
-    ):
-    """The Mixed Reservoir State feature-getting function.
-    
-    Returns feature function that returns a concatenation of
-    of evenly-spaced reservoir states over a driving period.
-    
-    Args:
-        decimation (int): The decimation time between states.
-        max_num_states (int): The maximum number of reservoir states to 
-		                      concatenate into a single MRS feature vector
-                              (may be required for memory purposes).
-        
-    Returns:
-        s (np.ndarray): The feature vectors.
-    """
-
-    @numba.jit(nopython = True, fastmath = True)
-    def MRS(r, u) -> np.ndarray:
-        r = r.reshape((-1, r.shape[-1])) 
-        num_time_steps = r.shape[0]
-        num_states = min((num_time_steps - 1) // decimation + 1, max_num_states)
-        chosen_states = num_time_steps - 1 \
-			- np.linspace(0, decimation * (num_states - 1), num_states).astype(np.int32)
-        s = r[chosen_states].reshape((-1, num_states * r.shape[-1]))
-
-        return s
-
-    return MRS
-
-
-@validate_arguments(config=dict(arbitrary_types_allowed=True))
-def StatesAndInputsTimeShifted(
-        states_lookback_length:   int = 0,
-        inputs_lookback_length:   int = 0,
-        states_decimation:        int = 1,
-        inputs_decimation:        int = 1 
-    ):
-    """The time-shifted states and inputs feature-getting function.
-    
-    Returns feature function that returns a concatenation of
-    of time-shifted reservoir states and inputs.
-    
-    Args:
-        states_lookback_length (int): The number of times steps in the past 
-                               required to reach the first reservoir state 
-                               included in the feature vector for the current
-                               time step.
-        inputs_lookback_length (int): The number of times steps in the past 
-                               required to reach the first reservoir input 
-                               included in the feature vector for the current
-                               time step.
-        states_decimation (int): The decimation time between states.
-        inputs_decimation (int): The decimation time between inputs.
-        
-    Returns:
-        s (np.ndarray): The feature vectors.
-    """
-
-    if (states_decimation < 1):
-        msg = "states_decimation must be greater than or equal to 1."
-        logging.error(msg)
-        raise(ValueError(msg))
-
-    if (inputs_decimation < 1):
-        msg = "inputs_decimation must be greater than or equal to 1."
-        logging.error(msg)
-        raise(ValueError(msg))
-
-    if (states_lookback_length < 0):
-        msg = "states_lookback_length must be greater than or equal to 0."
-        logging.error(msg)
-        raise(ValueError(msg))
-
-    if (inputs_lookback_length < 0):
-        msg = "inputs_lookback_length must be greater than or equal to 0."
-        logging.error(msg)
-        raise(ValueError(msg))
-
-    if (inputs_decimation > inputs_lookback_length and inputs_decimation > 1):
-        msg = "The inputs decimation time is larger than inputs_lookback_length. "\
-		      "Feature vectors will contain the current reservoir input only."
-        logging.warning(msg)
-
-    if (states_decimation > states_lookback_length and states_decimation > 1):
-        msg = "The states decimation time is larger than states_lookback_length."\
-		      "Feature vectors will contain the current reservoir state only."
-        logging.warning(msg)
-
-    lookback_length = max(states_lookback_length, inputs_lookback_length)
-
-    @numba.jit(nopython = True, fastmath = True)
-    def time_delayed(r, u):
-        r = r.reshape((-1, r.shape[-1]))
-        u = u.reshape((-1, u.shape[-1]))
-
-        if (r.shape[0] == states_lookback_length + 1 and
-			u.shape[0] == inputs_lookback_length + 1):
-            s = r[-1].reshape((1, -1))
-            for shift in range(states_decimation, states_lookback_length + 1,
-							   states_decimation):
-                s = np.hstack((s, r[-(shift+1)].reshape((1, -1))))
-
-            s = np.hstack((s, u[-1].reshape((1, -1))))
-            for shift in range(inputs_decimation, inputs_lookback_length + 1,
-							   inputs_decimation):
-                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
-
-        else:
-            s = r[lookback_length:]
-            for shift in range(states_decimation, states_lookback_length + 1,
-							   states_decimation):
-                s = np.hstack((s, r[lookback_length-shift:-shift]))
-
-            s = np.hstack((s, u[lookback_length:]))
-            for shift in range(inputs_decimation, inputs_lookback_length + 1,
-							   inputs_decimation):
-                s = np.hstack((s, u[lookback_length-shift:-shift]))
-
-        return s
-
-    time_delayed.states_lookback_length = states_lookback_length
-    time_delayed.inputs_lookback_length = inputs_lookback_length
-    time_delayed.lookback_length = lookback_length
-
-    return time_delayed
-
-
-@validate_arguments(config=dict(arbitrary_types_allowed=True))
-def StatesOnlyTimeShifted(
-        states_lookback_length:   int = 0,
-        states_decimation:        int = 1 
-    ):
-    """The time-shifted states feature-getting function.
-    
-    Returns feature function that returns a concatenation of
-    of time-shifted reservoir states.
-    
-    Args:
-        states_lookback_length (int): The number of times steps in the past 
-                               required to reach the first reservoir state 
-                               included in the feature vector for the current
-                               time step.
-        states_decimation (int): The decimation time between states.
-        
-    Returns:
-        s (np.ndarray): The feature vectors.
-    """
-
-    if (states_decimation < 1):
-        msg = "states_decimation must be greater than or equal to 1."
-        logging.error(msg)
-        raise(ValueError(msg))
-
-    if (states_decimation > states_lookback_length):
-        msg = "The states decimation time is larger than states_lookback_length."\
-		      "Feature vectors will contain the current reservoir state only."
-        logging.warning(msg)
-
-    @numba.jit(nopython = True, fastmath = True)
-    def time_delayed(r, u):
-        r = r.reshape((-1, r.shape[-1]))
-        u = u.reshape((-1, u.shape[-1]))
-
-        s = r[states_lookback_length:]
-        for shift in range(states_decimation, states_lookback_length + 1, states_decimation):
-            s = np.hstack((s, r[states_lookback_length-shift:-shift]))
-
-        return s
-
-    time_delayed.states_lookback_length = states_lookback_length
-    time_delayed.lookback_length = states_lookback_length
-
-    return time_delayed
-
-		
-'''
-# dataclass versions of the MRS and lookback feature functions. Commented out 
-# in preference of functions to allow jit compilation, which is useful since 
-# the MRS feature function is called repeatedly (thousands of time) in
-# training.
 @dataclass
 class MixedReservoirStates(ESNFeature):
     """The Mixed Reservoir State feature-getting function.
@@ -484,6 +312,19 @@ class MixedReservoirStates(ESNFeature):
 			):
         self.decimation = decimation
         self.max_num_states = max_num_states
+		
+        def inner(r: np.ndarray, u: np.ndarray):
+            r = r.reshape((-1, r.shape[-1])) 
+            num_time_steps = r.shape[0]
+            num_states = min((num_time_steps - 1) // self.decimation + 1,
+							 self.max_num_states)
+            chosen_states = num_time_steps - 1 \
+				- np.linspace(0, self.decimation * (num_states - 1),
+					 num_states).astype(np.int32)
+            s = r[chosen_states].reshape((-1, num_states * r.shape[-1]))
+            return s
+		
+        self.compiled = numba.njit(inner)
           
     def __call__(self, r, u) -> np.ndarray:
         r = r.reshape((-1, r.shape[-1])) 
@@ -539,8 +380,9 @@ class StatesAndInputsTimeShifted(ESNFeature):
         self.states_lookback_length = states_lookback_length
         self.inputs_lookback_length = inputs_lookback_length
         self.states_decimation = states_decimation
-        self.inputs_decimation = inputs_decimation       
-        self.lookback_length = max(states_lookback_length, inputs_lookback_length)
+        self.inputs_decimation = inputs_decimation    
+        lookback_length = max(states_lookback_length, inputs_lookback_length)
+        self.lookback_length = lookback_length
 	
         if (states_decimation < 1):
             msg = "states_decimation must be greater than or equal to 1."
@@ -571,6 +413,41 @@ class StatesAndInputsTimeShifted(ESNFeature):
             msg = "The states decimation time is larger than states_lookback_length."\
         		  "Feature vectors will contain the current reservoir state only."
             logging.warning(msg)
+			
+        def inner(r: np.ndarray, u: np.ndarray):
+            r = r.reshape((-1, r.shape[-1]))
+            u = u.reshape((-1, u.shape[-1]))
+        
+            if (r.shape[0] == states_lookback_length + 1 and
+				u.shape[0] == inputs_lookback_length + 1):
+	            s = r[-1].reshape((1, -1))
+	            for shift in range(states_decimation,
+								   states_lookback_length + 1,
+								   states_decimation):
+	                s = np.hstack((s, r[-(shift+1)].reshape((1, -1))))
+	            
+	            s = np.hstack((s, u[-1].reshape((1, -1))))
+	            for shift in range(inputs_decimation,
+								   inputs_lookback_length + 1,
+								   inputs_decimation):
+	                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
+	        
+            else:
+	            s = r[lookback_length:]
+	            for shift in range(states_decimation,
+								   states_lookback_length + 1,
+								   states_decimation):
+	                s = np.hstack((s, r[lookback_length-shift:-shift]))
+	        
+	            s = np.hstack((s, u[lookback_length:]))
+	            for shift in range(inputs_decimation,
+								   inputs_lookback_length + 1,
+								   inputs_decimation):
+	                s = np.hstack((s, u[lookback_length-shift:-shift]))
+            
+            return s
+		
+        self.compiled = numba.njit(inner)
 			
     
     def __call__(self, r : np.ndarray, u : np.ndarray):
@@ -649,7 +526,21 @@ class StatesOnlyTimeShifted(ESNFeature):
         self.states_lookback_length = states_lookback_length
         self.states_decimation = states_decimation
         self.lookback_length = states_lookback_length
-    
+		
+        def inner(r: np.ndarray, u: np.ndarray):
+            r = r.reshape((-1, r.shape[-1]))
+            u = u.reshape((-1, u.shape[-1]))
+        
+            s = r[states_lookback_length:]
+            for shift in range(states_decimation,
+							   states_lookback_length + 1,
+							   states_decimation):
+                s = np.hstack((s, r[states_lookback_length-shift:-shift]))
+
+            return s
+		
+        self.compiled = numba.njit(inner)
+			   
         if (states_decimation < 1):
             msg = "states_decimation must be greater than or equal to 1."
             logging.error(msg)
@@ -681,4 +572,3 @@ class StatesOnlyTimeShifted(ESNFeature):
     
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
 	    raise NotImplementedError()
-'''
