@@ -91,6 +91,55 @@ def main():
     rescompy.plotter.plot_actual(predict_result=predict_result)
     print ("Predict with Manually Supplied Lookbacks RMSE", np.mean(predict_result.rmse))
 	
+	
+    ### ~~~ EXPERIMENT 2: Lorenz control with time-delayed states only ~~~ ###
+    # For this experiment, we will again train on all three variables and then 
+    # predict after the training period by feeding back the z-component but 
+	# providing x and y as inputs. However, we will not utilize time-delayed 
+	# inputs in the feature vectors.
+      
+    feature_function = rescompy.features.StatesOnlyTimeShifted(
+	states_lookback_length = states_lookback_length,
+	states_decimation = states_decimation,
+	)
+
+    # Train the ESN on the training signals.
+    train_result = esn.train(transient_length, inputs = inputs_train,
+							 target_outputs = target_outputs_train,
+							 feature_function = feature_function)
+    print("Feature size: ", train_result.features.shape[1])
+              
+    # Define an observer mapper function.
+    @numba.jit(nopython=True, fastmath=True)
+    def mapper(inputs, outputs):
+        return np.concatenate((inputs, outputs[2:]))
+      
+    # Predict the signal in open-loop configuration directly after training.
+    predict_result = esn.predict(train_result, inputs=inputs_test,
+								 target_outputs = target_outputs_test,
+								 mapper =  mapper)
+    rescompy.plotter.plot_actual(predict_result=predict_result)
+    print ("Train and Predict RMSE", np.mean(predict_result.rmse))
+	
+    # Predict the signal in open-loop configuration by resynchronizing to the end 
+	# of the training period, which comes directly before the validation period.
+    predict_result = esn.predict(train_result, inputs=inputs_test,
+								 resync_signal = inputs_train[-resync_length:],
+								 target_outputs = target_outputs_test,
+								 mapper =  mapper)
+    rescompy.plotter.plot_actual(predict_result=predict_result)
+    print ("Resync and Predict RMSE",  np.mean(predict_result.rmse))
+    	
+    # Predict the signal in open-loop configuration by providing 
+	# lookback_inputs and lookback_states directly.
+    predict_result = esn.predict(train_result,
+								 inputs = inputs_test,
+								 lookback_states = train_result.states[-states_lookback_length-1:],
+								 target_outputs = target_outputs_test,
+								 mapper =  mapper)
+    rescompy.plotter.plot_actual(predict_result=predict_result)
+    print ("Predict with Manually Supplied Lookbacks RMSE", np.mean(predict_result.rmse))
+	
    
 if __name__ == '__main__':
     main()

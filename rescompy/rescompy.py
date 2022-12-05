@@ -233,7 +233,7 @@ class TrainResult:
         target_outputs:    List[np.ndarray],
         transient_lengths: List[int],
         accessible_drives: List[int],
-        feature_function:  Union[features.ESNFeature, Callable],
+        feature_function:  Union[features.ESNFeatureBase, Callable],
         weights:           np.ndarray,
         jacobian:          Optional[np.ndarray] = None
         ):
@@ -906,7 +906,7 @@ class ESN:
         inputs:            Union[np.ndarray, List[np.ndarray]],
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.ESNFeatureBase]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeatureBase]  = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_length:      int                                       = 100,
         ) -> TrainResult:
@@ -1117,7 +1117,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeatureBase]  = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_size:        int                                       = 10,
         accessible_drives: Union[int, List[int], str]                = "all",
@@ -1342,7 +1342,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeatureBase]  = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.tikhonov(),
         accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
@@ -1527,15 +1527,15 @@ class ESN:
     def predict(
         self,
         train_result:     Union[TrainResult, np.ndarray],
-        predict_length:   Optional[int]        = None,
-        inputs:           Optional[np.ndarray] = None,
-        target_outputs:   Optional[np.ndarray] = None,
-        initial_state:    Optional[np.ndarray] = None,
-        resync_signal:    Optional[np.ndarray] = None,
-        mapper:           Optional[Callable]   = default_mapper,
-        feature_function: Optional[Callable]   = None,
-        lookback_states:  Optional[np.ndarray] = None,
-		lookback_inputs:  Optional[np.ndarray] = None,
+        predict_length:   Optional[int]                              = None,
+        inputs:           Optional[np.ndarray]                       = None,
+        target_outputs:   Optional[np.ndarray]                       = None,
+        initial_state:    Optional[np.ndarray]                       = None,
+        resync_signal:    Optional[np.ndarray]                       = None,
+        mapper:           Optional[Callable]                         = default_mapper,
+        feature_function: Union[Callable, features.ESNFeatureBase]   = None,
+        lookback_states:  Optional[np.ndarray]                       = None,
+		lookback_inputs:  Optional[np.ndarray]                       = None,
         ) -> PredictResult:
         """The prediction method.
                 
@@ -1769,7 +1769,7 @@ class ESN:
             mapper_jit = None
 
             # what type of feature function are we dealing with?
-            if isinstance(feature_function, features.StandardFeature) \
+            if isinstance(feature_function, features.ESNFeatureBase) \
 				and hasattr(feature_function, 'compiled'):
                 feature_function_jit = feature_function.compiled
             else:

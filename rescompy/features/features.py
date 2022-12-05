@@ -165,8 +165,8 @@ class StatesAndInputs(StandardFeature):
         ))
 
     @staticmethod
-    def feature_size(esn_size,input_dim): 
-        return esn_size+input_dim
+    def feature_size(esn_size, input_dim): 
+        return esn_size + input_dim
 
 class StatesAndConstant(StandardFeature):
     """The States-and-Constant Feature function.
@@ -192,8 +192,8 @@ class StatesAndConstant(StandardFeature):
         ))
     
     @staticmethod
-    def feature_size(esn_size,input_dim): 
-        return 1+esn_size
+    def feature_size(esn_size, input_dim): 
+        return 1 + esn_size
 
 class StatesAndInputsAndConstant(StandardFeature):
     """The States-and-Inputs-and-Constant Feature function.
@@ -220,8 +220,8 @@ class StatesAndInputsAndConstant(StandardFeature):
         ))
 
     @staticmethod
-    def feature_size(esn_size,input_dim): 
-        return 1+input_dim+esn_size
+    def feature_size(esn_size, input_dim): 
+        return 1 + input_dim + esn_size
 
 @dataclass
 class ConstantInputAndPolynomial(StandardFeature):
@@ -235,12 +235,25 @@ class ConstantInputAndPolynomial(StandardFeature):
         
     Returns:
         s (np.ndarray): The feature vectors.
+		
+	Each instance of this feature function constructed will require jit 
+	compilation. If repeated calls are required, it is better to create a 
+	single feature object and call it repeatedly within a loop than to create
+	a new instance at each iteration.
     """
 
-    @validate_arguments(config=dict(arbitrary_types_allowed=True))
-    def __init__ (self, degree: int = 2):
-        self.degree = degree
-		
+    degree: int = 2
+    
+    def __call__(self, r, u):
+        const = np.zeros((r.shape[0], 1)) + 1
+        s = np.hstack((const, u, r))
+        for poly_ind in range(2, self.degree+1):
+            s = np.concatenate((s, r**poly_ind), axis=1)
+        return s
+	
+    def __post_init__ (self):
+        degree = self.degree
+        
         def inner(r : np.ndarray, u : np.ndarray):
             const = np.zeros((r.shape[0], 1)) + 1
             s = np.hstack((const, u, r))
@@ -249,22 +262,15 @@ class ConstantInputAndPolynomial(StandardFeature):
             return s
 
         self.compiled = numba.njit(inner)
-    
-    def __call__(self, r, u):
-        const = np.zeros((r.shape[0], 1)) + 1
-        s = np.hstack((const, u, r))
-        for poly_ind in range(2, self.degree+1):
-            s = np.concatenate((s, r**poly_ind), axis=1)
-        return s
 
     def feature_size(self, esn_size:int, input_dim:int): 
-        return 1+input_dim+esn_size*self.degree
+        return 1 + input_dim + esn_size * self.degree
 
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
         raise NotImplementedError()
 
 @dataclass
-class FinalStateOnly(StandardFeature):
+class FinalStateOnly(SingleFeature):
     """The Final-state-only Feature function.
     
     Simply returns the final reservoir state of a driving period.
@@ -283,8 +289,10 @@ class FinalStateOnly(StandardFeature):
         s = np.copy(r[-1].reshape(1, -1)) 
         return s
 	
-    def __init__(self):
-        self.compiled = numba.njit(lambda r, u: np.copy(r.reshape((-1, r.shape[-1]))[-1].reshape(1, -1)))
+    @staticmethod
+    @numba.njit
+    def compiled(r, u):
+        return np.copy(r.reshape((-1, r.shape[-1]))[-1].reshape(1, -1))
 
     @staticmethod	
     def feature_size(esn_size: int, signal_length: int):
@@ -296,7 +304,7 @@ class FinalStateOnly(StandardFeature):
 
 
 @dataclass
-class MixedReservoirStates(ESNFeature):
+class MixedReservoirStates(SingleFeature):
     """The Mixed Reservoir State feature-getting function.
     
     Returns feature function that returns a concatenation of
@@ -310,29 +318,15 @@ class MixedReservoirStates(ESNFeature):
         
     Returns:
         s (np.ndarray): The feature vectors.
+		
+	Each instance of this feature function constructed will require jit 
+	compilation. If repeated calls are required, it is better to create a 
+	single feature object and call it repeatedly within a loop than to create
+	a new instance at each iteration.
     """
 
-    @validate_arguments(config=dict(arbitrary_types_allowed=True))
-    def __init__(
-			self,
-			decimation:        int = 1,
-		    max_num_states:    int = 10,
-			):
-        self.decimation = decimation
-        self.max_num_states = max_num_states
-		
-        def inner(r: np.ndarray, u: np.ndarray):
-            r = r.reshape((-1, r.shape[-1])) 
-            num_time_steps = r.shape[0]
-            num_states = min((num_time_steps - 1) // self.decimation + 1,
-							 self.max_num_states)
-            chosen_states = num_time_steps - 1 \
-				- np.linspace(0, self.decimation * (num_states - 1),
-					 num_states).astype(np.int32)
-            s = r[chosen_states].reshape((-1, num_states * r.shape[-1]))
-            return s
-		
-        self.compiled = numba.njit(inner)
+    decimation:        int = 1
+    max_num_states:    int = 10
           
     def __call__(self, r, u) -> np.ndarray:
         r = r.reshape((-1, r.shape[-1])) 
@@ -345,6 +339,23 @@ class MixedReservoirStates(ESNFeature):
         s = r[chosen_states].reshape((-1, num_states * r.shape[-1]))
         return s
 
+    def __post_init__(self):
+        decimation = self.decimation
+        max_num_states = self.max_num_states
+		
+        def inner(r: np.ndarray, u: np.ndarray):
+            r = r.reshape((-1, r.shape[-1])) 
+            num_time_steps = r.shape[0]
+            num_states = min((num_time_steps - 1) // decimation + 1,
+							 max_num_states)
+            chosen_states = num_time_steps - 1 \
+				- np.linspace(0, decimation * (num_states - 1),
+					 num_states).astype(np.int32)
+            s = r[chosen_states].reshape((-1, num_states * r.shape[-1]))
+            return s
+		
+        self.compiled = numba.njit(inner)
+
     def feature_size(self, esn_size: int, signal_length: int):
         num_states = min((signal_length - 1) // self.decimation + 1,
 						 self.max_num_states)
@@ -354,7 +365,7 @@ class MixedReservoirStates(ESNFeature):
 	        raise NotImplementedError()
 
 @dataclass
-class StatesAndInputsTimeShifted(ESNFeature):
+class StatesAndInputsTimeShifted(TimeDelayedFeature):
     """The time-shifted states and inputs feature-getting function.
     
     Returns feature function that returns a concatenation of
@@ -374,23 +385,61 @@ class StatesAndInputsTimeShifted(ESNFeature):
         
     Returns:
         s (np.ndarray): The feature vectors.
+		
+	Each instance of this feature function constructed will require jit 
+	compilation. If repeated calls are required, it is better to create a 
+	single feature object and call it repeatedly within a loop than to create
+	a new instance at each iteration.
     """
 
-    @validate_arguments(config=dict(arbitrary_types_allowed=True))
-    def __init__(
-			self,
-			states_lookback_length:   int = 0,
-		    inputs_lookback_length:   int = 0,
-		    states_decimation:        int = 1,
-		    inputs_decimation:        int = 1,
-			):
+    states_lookback_length:   int = 0
+    inputs_lookback_length:   int = 0
+    states_decimation:        int = 1
+    inputs_decimation:        int = 1
 
-        self.states_lookback_length = states_lookback_length
-        self.inputs_lookback_length = inputs_lookback_length
-        self.states_decimation = states_decimation
-        self.inputs_decimation = inputs_decimation    
-        lookback_length = max(states_lookback_length, inputs_lookback_length)
-        self.lookback_length = lookback_length
+    @property
+    def lookback_length(self) -> int:
+        return max(self.states_lookback_length, self.inputs_lookback_length)
+    
+    def __call__(self, r : np.ndarray, u : np.ndarray):
+        r = r.reshape((-1, r.shape[-1]))
+        u = u.reshape((-1, u.shape[-1]))
+        
+        if (r.shape[0] == self.states_lookback_length + 1 and
+			u.shape[0] == self.inputs_lookback_length + 1):
+            s = r[-1].reshape((1, -1))
+            for shift in range(self.states_decimation,
+							   self.states_lookback_length + 1,
+							   self.states_decimation):
+                s = np.hstack((s, r[-(shift+1)].reshape((1, -1))))
+            
+            s = np.hstack((s, u[-1].reshape((1, -1))))
+            for shift in range(self.inputs_decimation,
+							   self.inputs_lookback_length + 1,
+							   self.inputs_decimation):
+                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
+        
+        else:
+            s = r[self.lookback_length:]
+            for shift in range(self.states_decimation,
+							   self.states_lookback_length + 1,
+							   self.states_decimation):
+                s = np.hstack((s, r[self.lookback_length-shift:-shift]))
+        
+            s = np.hstack((s, u[self.lookback_length:]))
+            for shift in range(self.inputs_decimation,
+							   self.inputs_lookback_length + 1,
+							   self.inputs_decimation):
+                s = np.hstack((s, u[self.lookback_length-shift:-shift]))
+        
+        return s
+
+    def __post_init__(self):
+        states_lookback_length = self.states_lookback_length
+        inputs_lookback_length = self.inputs_lookback_length
+        states_decimation = self.states_decimation
+        inputs_decimation = self.inputs_decimation
+        lookback_length = self.lookback_length
 	
         if (states_decimation < 1):
             msg = "states_decimation must be greater than or equal to 1."
@@ -455,41 +504,7 @@ class StatesAndInputsTimeShifted(ESNFeature):
             
             return s
 		
-        self.compiled = numba.njit(inner)
-			
-    
-    def __call__(self, r : np.ndarray, u : np.ndarray):
-        r = r.reshape((-1, r.shape[-1]))
-        u = u.reshape((-1, u.shape[-1]))
-        
-        if (r.shape[0] == self.states_lookback_length + 1 and
-			u.shape[0] == self.inputs_lookback_length + 1):
-            s = r[-1].reshape((1, -1))
-            for shift in range(self.states_decimation,
-							   self.states_lookback_length + 1,
-							   self.states_decimation):
-                s = np.hstack((s, r[-(shift+1)].reshape((1, -1))))
-            
-            s = np.hstack((s, u[-1].reshape((1, -1))))
-            for shift in range(self.inputs_decimation,
-							   self.inputs_lookback_length + 1,
-							   self.inputs_decimation):
-                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
-        
-        else:
-            s = r[self.lookback_length:]
-            for shift in range(self.states_decimation,
-							   self.states_lookback_length + 1,
-							   self.states_decimation):
-                s = np.hstack((s, r[self.lookback_length-shift:-shift]))
-        
-            s = np.hstack((s, u[self.lookback_length:]))
-            for shift in range(self.inputs_decimation,
-							   self.inputs_lookback_length + 1,
-							   self.inputs_decimation):
-                s = np.hstack((s, u[self.lookback_length-shift:-shift]))
-        
-        return s
+        self.compiled = numba.njit(inner)	
 	
     def feature_size(self, esn_size: int, input_dim : int):
         state_count = 1
@@ -507,7 +522,7 @@ class StatesAndInputsTimeShifted(ESNFeature):
 
 
 @dataclass
-class StatesOnlyTimeShifted(ESNFeature):
+class StatesOnlyTimeShifted(TimeDelayedFeature):
     """The time-shifted states feature-getting function.
     
     Returns feature function that returns a concatenation of
@@ -522,18 +537,50 @@ class StatesOnlyTimeShifted(ESNFeature):
         
     Returns:
         s (np.ndarray): The feature vectors.
+		
+	Each instance of this feature function constructed will require jit 
+	compilation. If repeated calls are required, it is better to create a 
+	single feature object and call it repeatedly within a loop than to create
+	a new instance at each iteration.
     """
 
-    @validate_arguments(config=dict(arbitrary_types_allowed=True))
-    def __init__(
-			self,
-			states_lookback_length:   int = 0,
-	        states_decimation:        int = 1
-			):
+    states_lookback_length:   int = 0
+    states_decimation:        int = 1
+
+    @property
+    def lookback_length(self):
+        return self.states_lookback_length
+	
+    @property
+    def inputs_lookback_length(self):
+        return 0 
+    
+    def __call__(self, r : np.ndarray, u : np.ndarray):
+        r = r.reshape((-1, r.shape[-1]))
+        u = u.reshape((-1, u.shape[-1]))
         
-        self.states_lookback_length = states_lookback_length
-        self.states_decimation = states_decimation
-        self.lookback_length = states_lookback_length
+        s = r[self.states_lookback_length:]
+        for shift in range(self.states_decimation,
+						   self.states_lookback_length + 1,
+						   self.states_decimation):
+            s = np.hstack((s, r[self.states_lookback_length-shift:-shift]))
+
+        return s
+
+    def __post_init__(self):
+        
+        states_lookback_length = self.states_lookback_length
+        states_decimation = self.states_decimation
+
+        if (states_decimation < 1):
+            msg = "states_decimation must be greater than or equal to 1."
+            logging.error(msg)
+            raise(ValueError(msg))
+    		
+        if (states_decimation > states_lookback_length):
+            msg = "The states decimation time is larger than states_lookback_length."\
+	    	      "Feature vectors will contain the current reservoir state only."
+            logging.warning(msg)
 		
         def inner(r: np.ndarray, u: np.ndarray):
             r = r.reshape((-1, r.shape[-1]))
@@ -548,28 +595,6 @@ class StatesOnlyTimeShifted(ESNFeature):
             return s
 		
         self.compiled = numba.njit(inner)
-			   
-        if (states_decimation < 1):
-            msg = "states_decimation must be greater than or equal to 1."
-            logging.error(msg)
-            raise(ValueError(msg))
-    		
-        if (states_decimation > states_lookback_length):
-            msg = "The states decimation time is larger than states_lookback_length."\
-	    	      "Feature vectors will contain the current reservoir state only."
-            logging.warning(msg)
-    
-    def __call__(self, r : np.ndarray, u : np.ndarray):
-        r = r.reshape((-1, r.shape[-1]))
-        u = u.reshape((-1, u.shape[-1]))
-        
-        s = r[self.states_lookback_length:]
-        for shift in range(self.states_decimation,
-						   self.states_lookback_length + 1,
-						   self.states_decimation):
-            s = np.hstack((s, r[self.states_lookback_length-shift:-shift]))
-
-        return s
 
     def feature_size(self, esn_size: int, input_dim : int):
         count = 1
