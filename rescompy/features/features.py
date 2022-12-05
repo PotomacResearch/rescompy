@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
 
-class ESNFeature(ABC):
+class ESNFeatureBase(ABC):
     """ 
     The Feature Abstract Base Class
     If you want to use a class (instead of just a Callable), the 
@@ -85,7 +85,44 @@ class ESNFeature(ABC):
     def feature_size(self, esn_size:int, input_dim:int):
         pass
 
-class StatesOnly(ESNFeature):
+
+'''
+This is a "standard" ESN feature, which depends only on the current time 
+step input and reservoir state.  Standard ESN features are functions
+of time.
+'''
+class StandardFeature(ESNFeatureBase):
+    pass
+
+'''
+This is an ESN feature that depends on multiple time steps.
+'''
+class TimeDelayedFeature(ESNFeatureBase):
+    @property
+    @abstractmethod
+    def states_lookback_length(self):
+        pass
+
+    @property
+    @abstractmethod
+    def inputs_lookback_length(self):
+        pass
+
+    @property
+    @abstractmethod
+    def lookback_length(self):
+        pass
+
+'''
+This is an ESN feature that is not a feature of time, but
+depends on multiple reservoir states/inputs.  An example
+would be a classification task that returns a single vector of class
+probabilities at the end of the signal.
+'''
+class SingleFeature(ESNFeatureBase):
+    pass
+
+class StatesOnly(StandardFeature):
     """The States-only Feature function.
     Simply returns the reservoir state, unaltered."""
     @staticmethod
@@ -104,7 +141,7 @@ class StatesOnly(ESNFeature):
     def feature_size(esn_size:int, input_dim: int):
         return esn_size
 
-class StatesAndInputs(ESNFeature):
+class StatesAndInputs(StandardFeature):
     """The States-and-Inputs Feature function.
     
     Concatenates the reservoir states with the inputs."""
@@ -127,7 +164,7 @@ class StatesAndInputs(ESNFeature):
     def feature_size(esn_size,input_dim): 
         return esn_size+input_dim
 
-class StatesAndConstant(ESNFeature):
+class StatesAndConstant(StandardFeature):
     """The States-and-Constant Feature function.
     
     Concatenates the reservoir states with a constant. """
@@ -152,7 +189,7 @@ class StatesAndConstant(ESNFeature):
     def feature_size(esn_size,input_dim): 
         return 1+esn_size
 
-class StatesAndInputsAndConstant(ESNFeature):
+class StatesAndInputsAndConstant(StandardFeature):
     """The States-and-Inputs-and-Constant Feature function.
     
     Concatenates the reservoir states with the inputs and a constant."""
@@ -179,7 +216,7 @@ class StatesAndInputsAndConstant(ESNFeature):
         return 1+input_dim+esn_size
 
 @dataclass
-class ConstantInputAndPolynomial(ESNFeature):
+class ConstantInputAndPolynomial(StandardFeature):
     """The Polynomial Feature-getting function.
     
     Returns feature function that returns a concatenation of
@@ -191,7 +228,7 @@ class ConstantInputAndPolynomial(ESNFeature):
     Returns:
         s (np.ndarray): The feature vectors.
     """
-	
+
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def __init__ (self, degree: int = 2):
         self.degree = degree
@@ -219,7 +256,7 @@ class ConstantInputAndPolynomial(ESNFeature):
         raise NotImplementedError()
 
 @dataclass
-class FinalStateOnly(ESNFeature):
+class FinalStateOnly(StandardFeature):
     """The Final-state-only Feature function.
     
     Simply returns the final reservoir state of a driving period.
