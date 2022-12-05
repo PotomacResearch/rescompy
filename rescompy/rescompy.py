@@ -882,7 +882,7 @@ class ESN:
         inputs:            Union[np.ndarray, List[np.ndarray]],
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_length:      int                                       = 100,
         ) -> TrainResult:
@@ -1088,7 +1088,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_size:        int                                       = 10,
         accessible_drives: Union[int, List[int], str]                = "all",
@@ -1310,7 +1310,7 @@ class ESN:
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
         dg_du:             Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.ESNFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.tikhonov(),
         accessible_drives: Union[int, List[int], str]                = "all",
         ) -> TrainResult:
@@ -1730,7 +1730,7 @@ class ESN:
             feature_function_jit = None
 
             # what type of feature function are we dealing with?
-            if isinstance(feature_function, features.ESNFeature) \
+            if isinstance(feature_function, features.StandardFeature) \
 				and hasattr(feature_function, 'compiled'):
                 feature_function_jit = feature_function.compiled
             else:
