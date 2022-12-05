@@ -130,8 +130,10 @@ class StatesOnly(StandardFeature):
         s = np.copy(r)    
         return s
 
-    def __init__(self):
-        self.compiled = numba.njit(lambda r, u: np.copy(r))
+    @staticmethod
+    @numba.njit
+    def compiled(r, u):
+        return np.copy(r)
     
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -150,8 +152,10 @@ class StatesAndInputs(StandardFeature):
         s = np.hstack((r, u))    
         return s
 
-    def __init__(self):
-        self.compiled = numba.njit(lambda r, u: np.hstack((r, u)))
+    @staticmethod
+    @numba.njit
+    def compiled(r, u):
+        return np.hstack((r, u))
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -175,8 +179,10 @@ class StatesAndConstant(StandardFeature):
         s = np.hstack((s, const))    
         return s
                 
-    def __init__(self):
-        self.compiled = numba.njit(lambda r, u: np.hstack((r, np.zeros((r.shape[0], 1)) + 1)))
+    @staticmethod
+    @numba.njit
+    def compiled(r, u):
+        return np.hstack((r, np.zeros((r.shape[0], 1)) + 1))
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
@@ -200,8 +206,10 @@ class StatesAndInputsAndConstant(StandardFeature):
         s = np.hstack((s, const))    
         return s
 
-    def __init__(self):
-        self.compiled = numba.njit(lambda r, u: np.hstack((r, u, np.zeros((r.shape[0], 1)) + 1)))
+    @staticmethod
+    @numba.njit
+    def compiled(r, u):
+        return np.hstack((r, u, np.zeros((r.shape[0], 1)) + 1))
 
     @staticmethod
     def jacobian(r: np.ndarray, u: np.ndarray, dr_du: np.ndarray):
