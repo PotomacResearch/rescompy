@@ -882,7 +882,7 @@ class ESN:
         inputs:            Union[np.ndarray, List[np.ndarray]],
         target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
         initial_state:     Optional[np.ndarray]                      = None,
-        feature_function:  Union[Callable, features.StandardFeature]      = features.StatesOnly(),
+        feature_function:  Union[Callable, features.ESNFeatureBase]      = features.StatesOnly(),
         regression:        Optional[Callable]                        = regressions.batched_ridge(),
         batch_length:      int                                       = 100,
         ) -> TrainResult:
