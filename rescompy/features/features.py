@@ -404,7 +404,8 @@ class StatesAndInputsTimeShifted(TimeDelayedFeature):
     def __call__(self, r : np.ndarray, u : np.ndarray):
         r = r.reshape((-1, r.shape[-1]))
         u = u.reshape((-1, u.shape[-1]))
-        
+
+        # When the reservoir evolves autonomously.        
         if (r.shape[0] == self.states_lookback_length + 1 and
 			u.shape[0] == self.inputs_lookback_length + 1):
             s = r[-1].reshape((1, -1))
@@ -418,7 +419,8 @@ class StatesAndInputsTimeShifted(TimeDelayedFeature):
 							   self.inputs_lookback_length + 1,
 							   self.inputs_decimation):
                 s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
-        
+
+        # When the reservoir is driven by an input signal for training.   
         else:
             s = r[self.lookback_length:]
             for shift in range(self.states_decimation,
@@ -474,7 +476,8 @@ class StatesAndInputsTimeShifted(TimeDelayedFeature):
         def inner(r: np.ndarray, u: np.ndarray):
             r = r.reshape((-1, r.shape[-1]))
             u = u.reshape((-1, u.shape[-1]))
-        
+
+            # When the reservoir evolves autonomously.
             if (r.shape[0] == states_lookback_length + 1 and
 				u.shape[0] == inputs_lookback_length + 1):
 	            s = r[-1].reshape((1, -1))
@@ -488,7 +491,8 @@ class StatesAndInputsTimeShifted(TimeDelayedFeature):
 								   inputs_lookback_length + 1,
 								   inputs_decimation):
 	                s = np.hstack((s, u[-(shift+1)].reshape((1, -1))))
-	        
+
+            # When the reservoir is driven by an input signal for training.     
             else:
 	            s = r[lookback_length:]
 	            for shift in range(states_decimation,

@@ -2,6 +2,7 @@
 import numpy as np
 import rescompy
 import matplotlib.pyplot as plt
+import numba
 
 # Fix a seed and set some experimental parameters.
 esn_seed = 15
@@ -15,7 +16,7 @@ leaking_rate = 0.1
 # Arguments for Mixed Reservoir States feature vector. Include every twentieth 
 # time step and do not allow more than ten states in a feature vector.
 decimation_time = 20
-max_num_states = 10
+max_num_states = 3
 
 num_train_signals = 10000
 num_test_signals = 100
@@ -86,8 +87,8 @@ def main():
     esn = rescompy.ESN(3, size, 3, spectral_radius, input_strength,
 					   bias_strength, leaking_rate, esn_seed)	
 
-    train_result = esn.train_batched(
-		transient_lengths = 0,
+    train_result = esn.train(
+		transient_length = 0,
 		inputs = lorenz_signals,
 		target_outputs = train_targets,
 		feature_function = rescompy.features.MixedReservoirStates(
@@ -97,6 +98,7 @@ def main():
 		initial_state = np.zeros(esn.size),
 		batch_size = 100,
 		accessible_drives = "final",
+		regression = rescompy.regressions.batched_ridge()
 		)
 	
     mean_rmse = 0
@@ -104,7 +106,6 @@ def main():
     for j in range(num_test_signals):
         predict_result = esn.predict(
 			train_result = train_result,
-			predict_length = 0,
 			inputs = test_signals[j],
 			initial_state = np.zeros(esn.size),
 			target_outputs = test_targets[j]
@@ -129,17 +130,16 @@ def main():
 	# of the same length as each of the training signals.
 
     # Create an ESN with a fixed seed.
-    esn = rescompy.ESN(3, size, 10, spectral_radius, input_strength,
-					   bias_strength, leaking_rate, esn_seed)	
 
-    train_result = esn.train_batched(
-		transient_lengths = 0,
+    train_result = esn.train(
+		transient_length = 0,
 		inputs = lorenz_signals,
 		target_outputs = train_targets,
 		feature_function = rescompy.features.FinalStateOnly(),
 		initial_state = np.zeros(esn.size),
 		batch_size = 100,
 		accessible_drives = "final",
+		regression = rescompy.regressions.batched_ridge()
 		)
 
     plt.figure(constrained_layout = True)
@@ -147,8 +147,60 @@ def main():
     for j in range(num_test_signals):
         predict_result = esn.predict(
 			train_result = train_result,
-			predict_length = 0,
 			inputs = test_signals[j],
+			initial_state = np.zeros(esn.size),
+			target_outputs = test_targets[j]
+			)
+        predicted_parameters = predict_result.reservoir_outputs
+        plt.plot(predict_result.target_outputs[0, 0], predict_result.target_outputs[0, 1],
+				 c = "red", marker = "o", linestyle = "none")
+        plt.plot(predicted_parameters[0, 0], predicted_parameters[0, 1],
+				 c = "blue", marker = "o", linestyle = "none")
+        mean_rmse += predict_result.rmse / num_test_signals
+    plt.legend(["Truth", "Predictions"])
+    plt.xlabel("$\\sigma$")
+    plt.ylabel("$\\rho$")
+    plt.show()	
+    print("Mean RMSE: ", mean_rmse)
+	
+    ### ~~~ EXPERIMENT 3: Infer the dynamical parameters of Lorenz signals ~~~ ###
+    # We repeat experiment 1 with a feature_function that is not a 
+	# rescompy.features.SingleFeature object by manually setting predict_length
+	# to zero. If using a regression function which takes the regression 
+	# matrices VS_T and SS_T as its arguments, this task also requires that
+	# batch_length is left at its default value (None), or is longer than the 
+	# length of the longest training signal.
+
+    @numba.jit(nopython = True, fastmath = True)
+    def user_defined_MRS(states, inputs):
+        states = states.reshape((-1, states.shape[-1])) 
+        num_time_steps = states.shape[0]
+        num_states = min((num_time_steps - 1) // decimation_time + 1,
+						 max_num_states)
+        chosen_states = num_time_steps - 1 \
+			- np.linspace(0, decimation_time * (num_states - 1),
+				 num_states).astype(np.int32)
+        s = states[chosen_states].reshape((-1, num_states * states.shape[-1]))
+        return s
+
+    train_result = esn.train(
+		transient_length = 0,
+		inputs = lorenz_signals,
+		target_outputs = train_targets,
+		feature_function = user_defined_MRS,
+		initial_state = np.zeros(esn.size),
+		batch_size = 100,
+		accessible_drives = "final",
+		regression = rescompy.regressions.batched_ridge()
+		)
+
+    plt.figure(constrained_layout = True)
+    mean_rmse = 0
+    for j in range(num_test_signals):
+        predict_result = esn.predict(
+			train_result = train_result,
+			inputs = test_signals[j],
+			predict_length = 0,
 			initial_state = np.zeros(esn.size),
 			target_outputs = test_targets[j]
 			)
