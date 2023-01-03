@@ -1123,6 +1123,181 @@ class ESN:
             return PredictResult(inputs, outputs, states, target_outputs,
                                  resync_signal, resync_states, resync_outputs)
     
+    
+class ParallelESN(ESN):
+    
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))
+    def __init__(
+        self,
+        num_esn:         int,
+        input_dimension: int,
+        size:            int                         = 100,
+        connections:     float                       = 10.0,
+        spectral_radius: float                       = 0.99,
+        input_strength:  float                       = 1.0,
+        bias_strength:   float                       = 0.0,
+        leaking_rate:    float                       = 1.0,
+        overlap_inputs:  int                         = 2,
+        homogeneous:     bool                        = True,
+        periodic:        bool                        = True,
+        seed:            Union[int, None, Generator] = None,
+        ):
+        
+        # Check that arguments are in the correct range.
+        utils.check_range(connections, 'connections', 0.0, 'geq', True)
+        utils.check_range(connections, 'connections', size, 'leq',
+                          True)
+        utils.check_range(spectral_radius, 'spectral_radius', 0.0, 'g',
+                          True)
+        utils.check_range(spectral_radius, 'spectral_radius', 1.0, 'l',
+                          False)
+        utils.check_range(input_strength, 'input_strength', 0.0, 'g',
+                          True)  
+        utils.check_range(bias_strength, 'bias_strength', 0.0, 'geq',
+                          True)
+        
+        # Calculate the input dimension for each ESN.
+        # Raise error if not possible.
+        comp_input_dimension = int(input_dimension/num_esn) + overlap_inputs
+        if input_dimension%num_esn != 0:
+            msg = "input_dimension is not divisible by num_esn; note that input_dimension " \
+                  "refers to the total input_dimension of the ESN, not the " \
+                  "input_dimension of each component ESN."
+            logging.warning(msg)
+        
+        # Calculate the size of each component ESN.
+        # Raise warning if rounding is required.
+        comp_size = int(size/num_esn)
+        if size%num_esn != 0:
+            msg = "size is not divisible by num_esn; note that size " \
+                  "refers to the total size of the ESN, not the " \
+                  "size of each component ESN."
+            logging.warning(msg)
+            msg = f"rounding size down to {comp_size*num_esn}"
+            size = comp_size*num_esn
+            logging.warning(msg)
+            
+        # Calculate number of left and right overlapping inputs.
+        if periodic:
+            left_overlaps = int(overlap_inputs/2)
+            right_overlaps = overlap_inputs - left_overlaps
+        else:
+            left_overlaps = 0
+            right_overlaps = overlap_inputs
+        
+        # Create the random state for reproducibility.
+        rng = default_rng(seed)
+
+        # Create the adjacency matrix A.
+        # For the parallel ESN, this is done by creating a block diagonal A,
+        # where each block is created in the usual way.
+        def rvs(size):
+            return rng.uniform(low=-1, high=1, size=connections*comp_size)
+        
+        A = None
+        for esn_ind in range(num_esn):
+            
+            if esn_ind == 0 or not homogeneous:
+                done = False
+                while not done:
+                    try:
+                        _A = sparse.random(comp_size, comp_size,
+                                 density=connections/comp_size,
+                                 random_state=rng, data_rvs=rvs)
+                        v0 = rng.random(comp_size)
+                        eigenvalues, _ = splinalg.eigs(_A, k=1, v0=v0)
+                        _A *= spectral_radius/np.abs(eigenvalues[0])
+                        done = True
+                    except:
+                        print ("failed to calculate SR, trying again...")
+                    
+            if A is None:
+                A = _A              
+            else:
+                A = sparse.block_diag((A, _A))
+
+        # Create input matrix B.
+        B = np.zeros((size, input_dimension))
+        for esn_ind in range(num_esn):
+            if esn_ind == 0 or not homogeneous:
+                if isinstance(input_strength, float):
+                    _B = rng.uniform(low=-input_strength, high=input_strength,
+                                    size=(comp_size, comp_input_dimension))
+                else:
+                    _B = rng.uniform(low=-1, high=1, size=(comp_size,
+                                                      comp_input_dimension))
+                    for strength_ind in range(len(input_strength)):
+                        _B[:, strength_ind] *= input_strength[strength_ind]
+            
+            # Assign elements of component input matrix to B.
+            # Note some indices are negative if periodic boundary conditions,
+            # hence whey we're doing this without more straightforward slices.
+            for i in range(-left_overlaps, comp_input_dimension-right_overlaps):
+                B[comp_size*esn_ind:comp_size*(esn_ind+1),
+                  (i+esn_ind*(comp_input_dimension-overlap_inputs))%input_dimension
+                  ] = _B[:, i+left_overlaps]
+
+        # Create the bias vector C.
+        C = np.zeros((size))
+        for esn_ind in range(num_esn):
+            if esn_ind == 0 or not homogeneous:
+                _C = rng.uniform(low=-bias_strength, high=bias_strength,
+                                 size=comp_size)
+            C[comp_size*esn_ind:comp_size*(esn_ind+1)] = _C
+
+        # Assign all of the required class attributes.
+        self.size = size
+        self.input_dimension = input_dimension
+        self.connections = connections
+        self._spectral_radius = spectral_radius
+        self._input_strength = input_strength
+        self._bias_strength = bias_strength
+        self.leaking_rate = leaking_rate
+        self.seed = seed
+        self.A = sparse.csr_matrix(A)
+        self.B = B
+        self.C = C
+        self.homogeneous = homogeneous
+        
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))
+    def train(
+        self,
+        transient_length:  int,
+        inputs:            Union[np.ndarray, List[np.ndarray]],
+        target_outputs:    Union[np.ndarray, List[np.ndarray], None] = None,
+        initial_state:     Optional[np.ndarray]                      = None,
+        dg_du:             Optional[np.ndarray]                      = None,
+        feature_function:  Union[Callable, features.ESNFeature]         = features.StatesOnly(),
+        regression:        Callable         = regressions.tikhonov(),
+        ) -> TrainResult:
+        
+        if not self.homogeneous:
+            return ESN.train(self, transient_length, inputs,
+                             target_outputs, initial_state, dg_du,
+                             feature_function, regression)
+        else:
+            pass
+        
+    @validate_arguments(config=dict(arbitrary_types_allowed=True))        
+    def predict(
+        self,
+        train_result:     Union[TrainResult, np.ndarray],
+        predict_length:   Optional[int]        = None,
+        inputs:           Optional[np.ndarray] = None,
+        target_outputs:   Optional[np.ndarray] = None,
+        initial_state:    Optional[np.ndarray] = None,
+        resync_signal:    Optional[np.ndarray] = None,
+        mapper:           Optional[Callable]   = default_mapper,
+        feature_function: Optional[Callable]   = None,
+        ) -> PredictResult:
+        
+        if not self.homogeneous:
+            return ESN.predict(self, train_result, predict_length,
+                               inputs, target_outputs, initial_state,
+                               resync_signal, mapper, feature_function)
+        else:
+            pass
+
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))    
 def optimize_hyperparameters(
