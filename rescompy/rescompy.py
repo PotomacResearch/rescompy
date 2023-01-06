@@ -1145,7 +1145,7 @@ class ParallelESN(ESN):
         
         # Check that arguments are in the correct range.
         utils.check_range(connections, 'connections', 0.0, 'geq', True)
-        utils.check_range(connections, 'connections', size, 'leq',
+        utils.check_range(connections, 'connections', int(size/num_esn), 'leq',
                           True)
         utils.check_range(spectral_radius, 'spectral_radius', 0.0, 'g',
                           True)
@@ -1192,13 +1192,14 @@ class ParallelESN(ESN):
         # For the parallel ESN, this is done by creating a block diagonal A,
         # where each block is created in the usual way.
         def rvs(size):
-            return rng.uniform(low=-1, high=1, size=connections*comp_size)
+            return rng.uniform(low=-1, high=1, size=size)
         
         A = None
         for esn_ind in range(num_esn):
             
             if esn_ind == 0 or not homogeneous:
                 done = False
+                try_count = 0
                 while not done:
                     try:
                         _A = sparse.random(comp_size, comp_size,
@@ -1209,7 +1210,13 @@ class ParallelESN(ESN):
                         _A *= spectral_radius/np.abs(eigenvalues[0])
                         done = True
                     except:
-                        print ("failed to calculate SR, trying again...")
+                        if try_count < 5:
+                            print ("failed to calculate SR, trying again...")
+                            try_count += 1
+                        else:
+                            msg = "failed to calculate A with requested SR."
+                            logging.error(msg)
+                            raise ValueError(msg)
                     
             if A is None:
                 A = _A              
@@ -1244,10 +1251,22 @@ class ParallelESN(ESN):
                 _C = rng.uniform(low=-bias_strength, high=bias_strength,
                                  size=comp_size)
             C[comp_size*esn_ind:comp_size*(esn_ind+1)] = _C
+            
+        # Save a component ESN for certain training methods.
+        comp_esn = ESN(comp_input_dimension, comp_size,
+                       connections/num_esn,
+                       spectral_radius, input_strength, bias_strength,
+                       leaking_rate, seed)
+        comp_esn.A = _A
+        comp_esn.B = _B
+        comp_esn.C = _C
 
         # Assign all of the required class attributes.
+        self.num_esn = num_esn
         self.size = size
+        self.comp_size = comp_size
         self.input_dimension = input_dimension
+        self.comp_input_dimension = comp_input_dimension
         self.connections = connections
         self._spectral_radius = spectral_radius
         self._input_strength = input_strength
@@ -1258,6 +1277,7 @@ class ParallelESN(ESN):
         self.B = B
         self.C = C
         self.homogeneous = homogeneous
+        self.comp_esn = comp_esn
         
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def train(
@@ -1269,34 +1289,60 @@ class ParallelESN(ESN):
         dg_du:             Optional[np.ndarray]                      = None,
         feature_function:  Union[Callable, features.ESNFeature]         = features.StatesOnly(),
         regression:        Callable         = regressions.tikhonov(),
+        train_comp_only:   bool             = True,
         ) -> TrainResult:
         
+        # TODO: just realized this isn't right either.
         if not self.homogeneous:
             return ESN.train(self, transient_length, inputs,
                              target_outputs, initial_state, dg_du,
                              feature_function, regression)
+
+        # TODO: for now this only works for regressions that simply look at
+        # states and target outputs.
         else:
-            pass
-        
-    @validate_arguments(config=dict(arbitrary_types_allowed=True))        
-    def predict(
-        self,
-        train_result:     Union[TrainResult, np.ndarray],
-        predict_length:   Optional[int]        = None,
-        inputs:           Optional[np.ndarray] = None,
-        target_outputs:   Optional[np.ndarray] = None,
-        initial_state:    Optional[np.ndarray] = None,
-        resync_signal:    Optional[np.ndarray] = None,
-        mapper:           Optional[Callable]   = default_mapper,
-        feature_function: Optional[Callable]   = None,
-        ) -> PredictResult:
-        
-        if not self.homogeneous:
-            return ESN.predict(self, train_result, predict_length,
-                               inputs, target_outputs, initial_state,
-                               resync_signal, mapper, feature_function)
-        else:
-            pass
+            if train_comp_only:
+                comp_inputs = inputs[:, :self.num_esn]
+                comp_target_outputs = target_outputs[:, :self.num_esn]
+                comp_train_result = self.comp_esn.train(transient_length,
+                           comp_inputs, comp_target_outputs, initial_state,
+                           dg_du, feature_function, regression)
+                states = comp_train_result.states.repeat(self.num_esn, axis=1)
+                states[:, self.num_esn:] += np.nan
+                weights = np.zeros((self.size, target_outputs.shape[1]))
+                for i in range(self.num_esn):
+                    weights[i*comp_train_result.weights.shape[0]
+                            :(i+1)*comp_train_result.weights.shape[0],
+                            i*comp_train_result.weights.shape[1]
+                            :(i+1)*comp_train_result.weights.shape[1]
+                            ] = comp_train_result.weights
+                return TrainResult(states, inputs, target_outputs,
+                                   weights, feature_function,
+                                   transient_length,
+                                   comp_train_result.jacobian)
+            
+            else:            
+                def parallel_regression(s, v):
+                    parallel_s = np.zeros((self.num_esn*s.shape[0],
+                                           int(s.shape[1]/self.num_esn)))
+                    parallel_v = np.zeros((self.num_esn*v.shape[0],
+                                           int(v.shape[1]/self.num_esn)))
+                    for i in range(self.num_esn):
+                        parallel_s[i*s.shape[0]:(i+1)*s.shape[0]] = s[
+                            :, i*parallel_s.shape[1]:(i+1)*parallel_s.shape[1]]
+                        parallel_v[i*v.shape[0]:(i+1)*v.shape[0]] = v[
+                            :, i*parallel_v.shape[1]:(i+1)*parallel_v.shape[1]]
+                    weights_parallel = regression(parallel_s, parallel_v)
+                    weights = np.zeros((s.shape[1], v.shape[1]))
+                    for i in range(self.num_esn):
+                        weights[i*weights_parallel.shape[0]
+                                :(i+1)*weights_parallel.shape[0],
+                                i*weights_parallel.shape[1]
+                                :(i+1)*weights_parallel.shape[1]] = weights_parallel
+                    return weights
+                return ESN.train(self, transient_length, inputs, 
+                                 target_outputs, initial_state, dg_du,
+                                 feature_function, parallel_regression)
 
 
 @validate_arguments(config=dict(arbitrary_types_allowed=True))    

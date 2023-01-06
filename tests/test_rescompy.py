@@ -463,6 +463,102 @@ class TestESN(unittest.TestCase):
         assert_almost_equal(predict_result1.reservoir_outputs,
                             predict_result2.reservoir_outputs)
 
+
+class TestParallelESN(unittest.TestCase):
+    """Tests features of the rescompy.ParallelESN class."""
+    
+    def test_init(self):
+        """Tests that the ParallelESN is constructed properly."""
+        
+        # Create a dummy ParallelESN with a fixed seed.
+        esn = rescompy.ParallelESN(5, 10, 100, 10, 0.99, 1.0, 0.5,
+                                   0.25, 2, True, True, SEED)
+        
+        # Confirm that the ParallelESN was constructed correctly.
+        A_comp0 = esn.A.toarray()[:20, :20]
+        B_comp0 = np.concatenate((esn.B[:20, -1:], esn.B[:20, :3]), axis=1)
+        C_comp0 = esn.C[:20]
+        for comp_ind in range(1, 5):
+            A_comp = esn.A.toarray()[comp_ind*20:(comp_ind+1)*20,
+                                     comp_ind*20:(comp_ind+1)*20]
+            if comp_ind < 4:
+                B_comp = esn.B[comp_ind*20:(comp_ind+1)*20,
+                               comp_ind*2+1:comp_ind*2+5]
+            else:
+                B_comp = np.concatenate((esn.B[-20:, -3:],
+                                         esn.B[-20:, :1]), axis=1)
+            C_comp = esn.C[comp_ind*20:(comp_ind+1)*20]
+
+            assert_almost_equal(A_comp0, A_comp)
+            assert_almost_equal(B_comp0, B_comp)
+            assert_almost_equal(C_comp0, C_comp)
+        
+    def test_train(self):
+        """Test the training method."""
+        
+        # Create the random state for reproducibility.
+        rng = default_rng(SEED)
+        
+        # Create a dummy ESN with a fixed seed.
+        esn = rescompy.ESN(3, 100, 10, 0.99, 1.0, 0.5, 0.25, SEED)
+        
+        # Create a batch of dummy inputs and target outputs.
+        inputs = [rng.uniform(-1, 1, (100, 3)) for _ in range(5)]
+        target_outputs = [rng.uniform(-1, 1, (100, 3)) for _ in range(5)]
+        
+        # Obtain TrainResult through train method.
+        train_result = esn.train(10, inputs, target_outputs)
+        
+        # Confirm that the inputs and target_outputs were properly batched.
+        for i in range(5):
+            assert_equal(train_result.inputs[i*100:(i+1)*100],
+                         inputs[i])
+            assert_equal(train_result.target_outputs[i*100:(i+1)*100],
+                         target_outputs[i])
+            
+        # Confirm that, even though data were random, the RMSE is reduced
+        # after the transient for every batch.
+        for i in range(5):
+            self.assertTrue(np.mean(train_result.rmse[i*100:i*100+10]) >
+                            np.mean(train_result.rmse[i*100+10:(i+1)*100]))
+
+    def test_train_jacobian(self):
+        # """Test that the jacobian is calculated properly ."""
+
+        def _load(file):
+            name = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), 
+                'data', file)
+            res = []
+            with open(name) as csvfile:
+                reader = csv.reader(csvfile)
+                for row in reader:
+                    res.append([float(r) for r in row])
+            return np.array(res).T
+
+        
+        # # Create the random state for reproducibility.
+        # rng = default_rng(SEED)
+        
+        # # Create a dummy ESN with a fixed seed.
+        esn = rescompy.ESN(64, 100, 10, 0.99, 1.0, 0.5, 0.25, SEED)
+        # set the A, B, and C matrices to known values
+        A = _load('A.csv').T
+        B = _load('B.csv').T
+        C = _load('C.csv')
+
+        inputs = _load('jacobian_target.csv')
+        D_ref = _load('jacobian_feature_derivatives.csv')
+        # reference feature includes other stuff besides the reservoir state
+        # also, we're going to throw out the first time step
+        states = _load('jacobian_features.csv')[1:,1:101]
+
+        # check that the intermediate D calculation is correct
+        D = rescompy._calc_D(states, inputs[:-1,:], 100, A, B, C)
+
+        # some slight differences in how the reference is calculated from 
+        # rescompy, so relax constraints
+        assert_almost_equal(D_ref[1:,:], D, decimal=2.5)  
         
 
 class TestOptimizeHyperparameters(unittest.TestCase):
