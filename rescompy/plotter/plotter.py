@@ -72,9 +72,8 @@ def plot_actual(
                     
     # Grab signals from train_result and/or predict_result.
     if train_result is not None:
-        lookback_train = train_result.lookback_length
         v_train = train_result.reservoir_outputs
-        v_target_train = train_result.target_outputs[lookback_train:]
+        v_target_train = train_result.target_outputs
         t_train = np.linspace(-v_train.shape[0]*tau, 0,
                               v_train.shape[0], False)
         tran_len = (-v_train.shape[0] + train_result.transient_length)
@@ -183,9 +182,8 @@ def plot_error(
                     
     # Grab signals from train_result and/or predict_result.
     if train_result is not None:
-        lookback_train = train_result.lookback_length
         v_train = train_result.reservoir_outputs
-        v_target_train = train_result.target_outputs[lookback_train:]
+        v_target_train = train_result.target_outputs
         t_train = np.linspace(-v_train.shape[0]*tau, 0,
                               v_train.shape[0], False)
         error_train = np.abs(v_target_train - v_train)

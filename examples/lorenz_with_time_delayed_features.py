@@ -56,7 +56,10 @@ def main():
     # Train the ESN on the training signals.
     train_result = esn.train(transient_length, inputs = inputs_train,
 							 target_outputs = target_outputs_train,
-							 feature_function = feature_function)
+							 feature_function = feature_function,
+							 regression = rescompy.regressions.batched_ridge(),
+							 batch_length = 100
+							 )
     print("Feature size: ", train_result.features.shape[1])
               
     # Define an observer mapper function.

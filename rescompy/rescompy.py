@@ -263,21 +263,27 @@ class TrainResult:
                 states and inputs to features.
             weights (np.ndarray): The array of output weights.
         """
-		
+
+        # Check if the feature function requires a lookback period to include
+        # time-delayed states or inputs in feature vectors.
+        if issubclass(type(feature_function), features.TimeDelayedFeature):
+            self.lookback_length = feature_function.lookback_length
+        else: self.lookback_length = 0
+
         #Check for shape consistencies.
         for task_ind in range(len(inputs)):
-            features = feature_function(states[task_ind], inputs[task_ind])
+            check_features = feature_function(states[task_ind], inputs[task_ind])
             utils.check_shape(inputs[task_ind].shape,
 							  (states[task_ind].shape[0], None), 'inputs')
             utils.check_shape(weights.shape,
-							  (features.shape[1], target_outputs[0].shape[1]),
+							  (check_features.shape[1], target_outputs[0].shape[1]),
 							  'weights')
             if (target_outputs[task_ind].shape[0] > 1):
                 utils.check_shape(target_outputs[task_ind].shape,
 								  (states[task_ind].shape[0], None), 'target_outputs')
 
             else:
-                utils.check_range(features.shape[0],
+                utils.check_range(check_features.shape[0],
 								  "The number of feature vectors per input signal",
 								  1, 'eq', True)
         
@@ -287,26 +293,24 @@ class TrainResult:
         self.weights = weights
         self.jacobian = jacobian
         
-		# Check if the feature function requires a lookback period to include
-        # time-delayed states or inputs in feature vectors.
-        if hasattr(feature_function, 'lookback_length'):
-            self.lookback_length = feature_function.lookback_length
-        else: self.lookback_length = 0
-
         self.listed_targets = target_outputs		
         self.listed_transients = transient_lengths
         self.listed_inputs = inputs
         self.listed_states = states
-		
-        self.states = functools.reduce(
-		        lambda x, y : np.concatenate((x, y), axis = 0),
-		    	self.listed_states)
-        self.inputs = functools.reduce(
-		        lambda x, y : np.concatenate((x, y), axis = 0),
-		    	self.listed_inputs)
-        self.target_outputs = functools.reduce(
-		        lambda x, y : np.concatenate((x, y), axis = 0),
-		    	self.listed_targets)
+
+        self.states = self.listed_states[0][self.lookback_length:]
+        self.inputs = self.listed_inputs[0][self.lookback_length:]
+        self.target_outputs = self.listed_targets[0][self.lookback_length:]
+        if len(self.listed_inputs) > 1:
+            self.states = functools.reduce(
+		        lambda x, y : np.concatenate((x, y[self.lookback_length:]),
+					axis = 0), self.listed_states[1:], self.states)
+            self.inputs = functools.reduce(
+		        lambda x, y : np.concatenate((x, y[self.lookback_length:]),
+					axis = 0), self.listed_inputs[1:], self.inputs)
+            self.target_outputs = functools.reduce(
+		        lambda x, y : np.concatenate((x, y[self.lookback_length:]),
+					axis = 0), self.listed_targets[1:], self.target_outputs)
 						
     @property
     def transient_length(self):
@@ -316,12 +320,12 @@ class TrainResult:
         If multiple transient lengths applied, an error will be raised."""
         
         transients = np.array(self.listed_transients)
-        if transients == transients[0]:
-            return transients[0]
-        else:
+        if any(transients - transients[0]):
             msg = "Transient length is not defined since different training " \
                       "tasks employed different transient lengths."
             logging.error(msg)
+        else:
+            return transients[0]
         
     @property
     def features(self):
@@ -336,7 +340,7 @@ class TrainResult:
         features = functools.reduce(
 			    lambda x, y : np.concatenate((x, y), axis = 0),
 				listed_features)
-        
+
         return features
 
     @property
@@ -348,29 +352,73 @@ class TrainResult:
     @property
     def rmse(self):
         """The root-mean-square error property.
-        Computes the root-mean-square error as a function of time."""
-        return np.sqrt(np.mean(
-			np.square(self.reservoir_outputs -
-			 self.target_outputs[self.lookback_length:]), axis=1))
+        Computes the root-mean-square error as a function of time for 
+		time-series prediction tasks.
+		Computes the root-mean-square error as a function of sample target 
+		vector for single-target mapping tasks."""
+        
+        return np.sqrt(np.mean(np.square(self.reservoir_outputs
+										 - self.target_outputs), axis=1))
     
     @property
     def nrmse(self):
         """The normalized root-mean-square-error property.
         Computes the normalized root-mean-square-error as a function of time.
-        Note that this is done component-wise.
+        Note that this normalization is done component-wise.
         If the variance of any component is 0, the NRMSE is not defined and an
-        error will be raised."""
-        
+        error will be raised.
+        Is defined only when target_outputs are provided."""
+
         norm = np.var(self.target_outputs, axis=0)
         if np.min(norm) == 0.0:
             msg = "NRMSE is not defined when a component of the " \
                       "target output has 0 variance."
             logging.error(msg)
-        else:
-            se = np.square(self.reservoir_outputs
-                           - self.target_outputs[self.lookback_length:])
-            return np.sqrt(np.mean(se/norm, axis=1))
 
+        else:
+            se = np.square(self.reservoir_outputs - self.target_outputs)
+            return np.sqrt(np.mean(se/norm, axis = 1))
+
+    @property
+    def component_errors(self) -> np.ndarray:
+        """The component-wise error property.
+        Computes the component-wise root-mean-square error over all sample
+		targets for single-target mapping tasks."""
+        
+        if not issubclass(type(self.feature_function), features.SingleFeature):
+            msg = "component_errors are not defined for time-series " \
+				"prediction tasks. Call rmse or nrmse instead. Returning NaN."
+            logging.warning(msg)
+            return np.nan
+		   
+        else:
+            return np.sqrt(np.mean(np.square(self.reservoir_outputs
+                                             - self.target_outputs), axis=0))
+		
+    @property
+    def normalized_component_errors(self) -> np.ndarray:
+        """The normalized component-wise error property.
+        Computes the normalized component-wise root-mean-square error over all 
+		sample targets for single-target mapping tasks. Normalized such that 
+		the error in each component is normalized by the variance of that 
+		component over all sample targets."""
+
+        norm = np.var(self.target_outputs, axis = 0)
+        if np.min(norm) == 0.0:
+            msg = "normalized_component_errors are not defined when a " \
+				"component of the target outputs has 0 variance."
+            logging.error(msg)
+        
+        if not issubclass(type(self.feature_function), features.SingleFeature):
+            msg = "component_errors are not defined for time-series " \
+				"prediction tasks. Call rmse or nrmse instead. Returning NaN."
+            logging.warning(msg)
+            return np.nan
+		   
+        else:
+            se = np.square(self.reservoir_outputs - self.target_outputs)
+            return np.sqrt(np.mean(se/norm, axis = 0))
+            
     def __repr__(self):
         msg = f"<TrainResult with ({self.weights.shape[0]} x " \
                   f"{self.weights.shape[1]}) weights>"
@@ -391,8 +439,7 @@ class PredictResult:
         reservoir_states (np.ndarray): The reservoir states over the prediction
             period.
         predict_length (int): The length of the prediction period. If zero,
-		    a classification-style task with a single output 
-			vector is assumed.
+		    a classification-style task with a single output vector is assumed.
         target_outputs (np.ndarray): The target outputs.
             The first axis must have the same length as the first axis of
             inputs.
@@ -487,7 +534,7 @@ class PredictResult:
     def component_errors(self) -> np.ndarray:
         """The component-wise error property.
         Computes the component-wise error for a single-target mapping.
-        Is only defined when target_outputs are provided and
+        Is defined only when target_outputs are provided and
 		predict_length = 0."""
         
         if self.predict_length != 0:
@@ -511,7 +558,7 @@ class PredictResult:
 		time-series prediction tasks with predict_length greater than zero.
 		Computes the root-mean-square error over all components of target 
 		vector for single-target mappings with predict_length zero.
-        Is only defined when target_outputs are provided."""
+        Is defined only when target_outputs are provided."""
         
         if self.target_outputs is not None:
             if self.predict_length == 0:
@@ -532,7 +579,7 @@ class PredictResult:
         Note that this is done component-wise.
         If the variance of any component is 0, the NRMSE is not defined and an
         error will be raised.
-        Is only defined when target_outputs are provided."""
+        Is defined only when target_outputs are provided."""
         
         if self.predict_length == 0:
             msg = "nrmse not defined for single-target mappings with " \
@@ -892,6 +939,7 @@ class ESN:
                                          self.B, self.C,
                                          self.leaking_rate)
 
+
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def train(
         self,
@@ -902,10 +950,10 @@ class ESN:
         dg_du:              Optional[np.ndarray]                      = None,
         feature_function:   Union[Callable, features.ESNFeatureBase]  = features.StatesOnly(),
         regression:         Optional[Callable]                        = regressions.tikhonov(),
-        batch_size:         int                                       = 100,
+        batch_size:         int                                       = None,
         batch_length:       int                                       = None,
         accessible_drives:  Union[int, List[int], str]                = "all",
-        accessible_batches: Union[int, List[int], str]                = "all"
+        accessible_batches: Union[List[str], str]                     = "both"
         ) -> TrainResult:
         """The training method.
                 
@@ -931,13 +979,28 @@ class ESN:
                               the reservoir states.
             regression: The optimizer that minimizes the difference between
                         features and target_outputs.
+            batch_size: The number of input signals to process before each 
+                        update to the regression matrices SS_T and VS_T. Must 
+						be None if the regression function does not take the 
+						matrices SS_T and VS_T as arguments. Defaults to None.
+            batch_length: The number of time steps to process before each 
+			              update to the regression matrices SS_T and VS_T. Must
+						  be None if the regression function does not take the 
+						  matrices SS_T and VS_T as arguments. Defaults to None.
+						  Ignored when the feature function is of type 
+						  rescompy.features.SingleFeature and forms a single 
+						  feature vector per input signal.
 			accessible_drives (str, int, list): The training signals whose
                         associated states and inputs objects will be available
                         int the returned TrainResult object. Defaults to all.
-			accessible_batches (str, int, list): The batches from each input 
-                        signal whose associated states and inputs objects will 
-                        be available in the returned TrainResult object.
-                        Defaults to all.
+			accessible_batches (str): The batches from each input signal whose
+                        associated states and inputs objects will be
+                        available in the returned TrainResult object.
+                        Accepts "first", which saves information from the
+						first batch of an input signal, "final", which saves 
+						information from the final batch of an input signal 
+						including any remainder time-steps, and "both", which
+						saves both the first and final batches.
                                    
         Returns:
             result: A TrainResult object containing information about the
@@ -963,6 +1026,17 @@ class ESN:
             accessible_drives = [len(inputs) - 1]
         elif accessible_drives == "all":
             accessible_drives = list(np.arange(len(inputs)))
+			
+        if accessible_batches not in ["both", "final", "first"]:
+            msg = f"accessible_batches set to '{accessible_batches}' but must" \
+				f" be one of 'both', 'final', or 'first'. Please ensure that" \
+				f" accessible_batches is set to a valid option."
+            logging.error(msg)
+
+        # If there are any negative indices in accessible_drives, replace them
+		# with their equivalent positive index for downstream clarity.
+        for index, entry in enumerate(accessible_drives):
+            if entry < 0: accessible_drives[index] = len(inputs) + entry
     
         # Confirm that the same number of inputs and target_outputs are
         # provided.
@@ -977,8 +1051,9 @@ class ESN:
             msg = "len(transient_lengths) must be one or match len(inputs)."
             logging.error(msg)
         
+        num_samples = len(inputs)
         # Shape inputs and target_outputs, if necessary.
-        for inputs_ind in range(len(inputs)):
+        for inputs_ind in range(num_samples):
             if len(inputs[inputs_ind].shape) == 1:
                 inputs[inputs_ind] = inputs[inputs_ind][:, None]
         for target_outputs_ind in range(len(target_outputs)):
@@ -989,15 +1064,9 @@ class ESN:
         
         # Check if the feature function requires a lookback period to include
         # time-delayed states or inputs in feature vectors.
-        if hasattr(feature_function, 'lookback_length'):
+        if issubclass(type(feature_function), features.TimeDelayedFeature):
             lookback_length = feature_function.lookback_length
         else: lookback_length = 0
-        if hasattr(feature_function, 'inputs_lookback_length'):
-            inputs_lookback_length = feature_function.inputs_lookback_length
-        else: inputs_lookback_length = 0
-        if hasattr(feature_function, 'states_lookback_length'):
-            states_lookback_length = feature_function.states_lookback_length
-        else: states_lookback_length = 0
         
         # If no targets are provided, assume we are trying to predict the
         # inputs.
@@ -1021,14 +1090,14 @@ class ESN:
             if len(inputs) == 1: msg1 = 'inputs'
             else: msg1 = f'inputs[{task_ind}]'
             utils.check_shape(inputs[task_ind].shape,
-                          (None, self.input_dimension), msg1)            
-
-        num_samples = len(inputs)
-        batch_size = min(num_samples, batch_size)
+                          (None, self.input_dimension), msg1)
 		
-        num_batches = num_samples // batch_size
-        num_remainders = num_samples % batch_size
-
+        # If the feature_function has a compiled option, use it. Otherwise
+		# use the non-compiled version.
+        if hasattr(feature_function, 'compiled'):
+	            feature_function_jit = feature_function.compiled
+        else: feature_function_jit = feature_function
+		
         # use the signature of the regression to figure out the parameters
         regression_params = inspect.signature(regression).parameters
 
@@ -1039,17 +1108,33 @@ class ESN:
         SS_T = None
         VS_T = None
 		
-        targets_saved = [None] * len(accessible_drives)
-        inputs_saved = [None] * len(accessible_drives)
-        states_saved = [None] * len(accessible_drives)
-        transients_saved = [None] * len(accessible_drives)
-        save_ind = 0
+        targets_saved = []
+        inputs_saved = []
+        states_saved = []
+        transients_saved = []
 
         # Get the propagated reservoir states.
 		
 		# If the regression function takes the regression matrices VS_T and 
 		# SS_T as arguments
         if ('VS_T' in regression_params and 'SS_T' in regression_params):
+			
+            # Ensure that a valid batch_size or batch_length have been
+			# provided. If not, return an error message.
+            if (batch_length is None and batch_size is None):
+                msg = "Regression function takes the regression matrices VS_T" \
+					" and SS_T as arguments, but no batch_length or" \
+					" batch_size is provided. Please provide an integer" \
+					" batch_length to create batches with a fixed number of" \
+					" time-steps and/or an integer batch_size to create" \
+					" batches with a fixed number of input signals."
+                logging.error(msg)
+                raise(NotImplementedError(msg))
+			
+            if (batch_size is None): batch_size = num_samples
+            batch_size = min(num_samples, batch_size)
+            num_batches = num_samples // batch_size
+            num_remainders = num_samples % batch_size
             
             # If the training task requires that each input signal yields a 
 			# single feature vector, or no batch_length is provided, ensure
@@ -1061,238 +1146,121 @@ class ESN:
                 batch_length = max([inputs[ind].shape[0]
 									for ind in range(num_samples)])
 			
-            feature_function_jit = None
-            # what type of feature function are we dealing with?
-            if isinstance(feature_function, features.ESNFeatureBase) \
-				and hasattr(feature_function, 'compiled'):
-	                feature_function_jit = feature_function.compiled
-            else:
-	            # it's a callable; has it already been jitted?
-	            if hasattr(feature_function, 'inspect_llvm'):
-	                # it has, grab the already jitted function.
-	                feature_function_jit = feature_function
-	            else:
-	                # it has not, let's try to compile it
-	                feature_function_jit = _compile_feature_function(
-						feature_function,
-						states_lookback_length,
-						inputs_lookback_length
-						)
-			# If feature_function is cannot be compiled, use the non-compiled 
-			# version
-            if (feature_function_jit is None):
-                feature_function_jit = feature_function
+            # Store the number of sample inputs to be processed in 
+			# each batch, accounting for remainders
+            batch_sizes = [batch_size] * num_batches 
+            if num_remainders > 0: batch_sizes.append(num_remainders)
 			
-            for batch_ind in range(num_batches):
-                for task_ind in range(batch_size):
+            for batch_ind in range(len(batch_sizes)):
+                for task_ind in range(batch_sizes[batch_ind]):
                     total_ind = batch_ind * batch_size + task_ind
-					
-                    t_batch_size = min(batch_length, inputs[total_ind].shape[0]
-									   - transient_length[total_ind])
-                    num_t_batches = (inputs[total_ind].shape[0] -
-									 transient_length[total_ind]) // t_batch_size
-                    remainder_length = (inputs[total_ind].shape[0] -
-										transient_length[total_ind]) % t_batch_size
-					
-                    if isinstance(accessible_batches, int):
-                        accessible_batches = [accessible_batches]
-                    elif accessible_batches == "final":
-                        accessible_batches = [len(inputs) - 1]
-                    elif accessible_batches == "all":
-                        accessible_batches = list(np.arange(len(inputs)))
-          
+
+                    task_inputs = inputs[total_ind]
+                    task_targets = target_outputs[total_ind]
                     transient_i = transient_length[total_ind]
-                    inputs_i = inputs[total_ind][:transient_i+t_batch_size]
+
+                    t_batch_size = min(batch_length, task_inputs.shape[0] - transient_i)
+                    num_t_batches = (task_inputs.shape[0] - transient_i) // t_batch_size
+                    remainder_length = (task_inputs.shape[0] - transient_i) % t_batch_size
+					
+                    if accessible_batches == "both":
+                        save_batches = [0, num_t_batches - 1, num_t_batches]
+                    elif accessible_batches == "final":
+                        save_batches = [num_t_batches - 1, num_t_batches]
+                    elif accessible_batches == "first":
+                        save_batches = [0]
+					
+                    inputs_i = task_inputs[:transient_i + t_batch_size]
                     states_i = self.get_states(initial_state, inputs_i)
-                    new_state = states_i[-1]
-                    lookback_inputs = inputs_i[-lookback_length-1:]
-                    lookback_states = states_i[-lookback_length-1:]
-          
+                    targets_i = task_targets[: transient_i + t_batch_size]
+
                     features_i = feature_function_jit(states_i[transient_i:],
 													  inputs_i[transient_i:])
-                    targets_i = target_outputs[total_ind][:transient_i
-														  + t_batch_size]
-                    targets_train_i = targets_i[transient_i + lookback_length:]
-					
-                    if total_ind in accessible_drives:
-	                    inputs_saved[save_ind] = inputs_i
-	                    targets_saved[save_ind] = targets_i
-	                    states_saved[save_ind] = states_i
-	                    transients_saved[save_ind] = transient_i
-	                    save_ind += 1
-						
+					    
                     if (SS_T is None):
                         SS_T = features_i.T @ features_i
-                        VS_T = features_i.T @ targets_train_i
+                        VS_T = features_i.T @ targets_i[transient_i + lookback_length:]
                     else:
                         SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_train_i
-          
+                        VS_T += features_i.T @ targets_i[transient_i + lookback_length:]
+					
+                    if total_ind in accessible_drives:
+                        transients_saved.append(transient_i)
+                        if 0 in save_batches:
+	                        inputs_saved.append(inputs_i)
+	                        targets_saved.append(targets_i)
+	                        states_saved.append(states_i)
+
+                    time_batched_data = []
                     for t_batch_ind in range(1, num_t_batches):
                         start_time = transient_i + t_batch_ind * t_batch_size
-						
-                        inputs_i = inputs[total_ind][start_time:
-													 start_time + t_batch_size]
-                        states_i = self.get_states(new_state, inputs_i)
-                        targets_i = target_outputs[total_ind][start_time:
-															  start_time + t_batch_size]
-                        
-                        if (total_ind in accessible_drives):# and
-							#t_batch_ind in accessible_batches):
-                            inputs_saved[save_ind-1] = np.concatenate(
-								(inputs_saved[save_ind-1], inputs_i), axis = 0)
-                            targets_saved[save_ind-1] = np.concatenate(
-								(targets_saved[save_ind-1], targets_i), axis = 0)
-                            states_saved[save_ind-1] = np.concatenate(
-								(states_saved[save_ind-1], states_i), axis = 0)
-						
-                        new_state = states_i[-1]
-                        states_i = np.concatenate((lookback_states, states_i))
-                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
-                        lookback_inputs = inputs_i[-lookback_length-1:]
-                        lookback_states = states_i[-lookback_length-1:]
-              
-                        features_i = feature_function_jit(states_i[1:],
-														  inputs_i[1:])
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i
-          
+                        time_batched_data.append(zip(
+							[task_inputs[start_time: start_time + t_batch_size]],
+							[task_targets[start_time - lookback_length:
+										 start_time + t_batch_size]]))
                     if (num_t_batches > 0 and remainder_length > 0):
                         start_time = transient_i + num_t_batches * t_batch_size
-						
-                        inputs_i = inputs[total_ind][start_time:]
-                        states_i = self.get_states(new_state, inputs_i)
-                        targets_i = target_outputs[total_ind][start_time:]
-						
-                        if (total_ind in accessible_drives):# and
-							#num_t_batches in accessible_batches):
-                            inputs_saved[save_ind-1] = np.concatenate(
-								(inputs_saved[save_ind-1], inputs_i), axis = 0)
-                            targets_saved[save_ind-1] = np.concatenate(
-								(targets_saved[save_ind-1], targets_i), axis = 0)
-                            states_saved[save_ind-1] = np.concatenate(
-								(states_saved[save_ind-1], states_i), axis = 0)
+                        time_batched_data.append(zip([task_inputs[start_time:]],
+							[task_targets[start_time - lookback_length: ]]))
+
+                    for t_batch_ind, batch_data in enumerate(time_batched_data):
 						
                         new_state = states_i[-1]
-                        states_i = np.concatenate((lookback_states, states_i))
-                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
                         lookback_inputs = inputs_i[-lookback_length-1:]
                         lookback_states = states_i[-lookback_length-1:]
+						
+                        data = list(zip(*batch_data))
+                        inputs_i = data[0][0]
+                        targets_i = data[1][0]
+                        states_i = np.concatenate(
+							(lookback_states, self.get_states(new_state, inputs_i)))
+                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
 
                         features_i = feature_function_jit(states_i[1:],
 														  inputs_i[1:])
                         SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i
-						
-            if (num_remainders > 0):
-                for task_ind in range(num_remainders):
-                    total_ind = num_batches * batch_size + task_ind
-                    t_batch_size = min(batch_length, inputs[total_ind].shape[0]
-									   - transient_length[total_ind])
-                    num_t_batches = (inputs[total_ind].shape[0] -
-									 transient_length[total_ind]) // t_batch_size
-                    remainder_length = (inputs[total_ind].shape[0] -
-										transient_length[total_ind]) % t_batch_size
-          
-                    transient_i = transient_length[total_ind]
-                    inputs_i = inputs[total_ind][:transient_i+t_batch_size]
-                    states_i = self.get_states(initial_state, inputs_i)
-                    new_state = states_i[-1]
-                    lookback_inputs = inputs_i[-lookback_length-1:]
-                    lookback_states = states_i[-lookback_length-1:]
-          
-                    features_i = feature_function_jit(states_i[transient_i:],
-													  inputs_i[transient_i:])
-                    targets_i = target_outputs[total_ind][: transient_i
-														  + t_batch_size]
-                    targets_train_i = targets_i[transient_i+lookback_length:]
-					
-                    if total_ind in accessible_drives:
-	                    inputs_saved[save_ind] = inputs_i
-	                    targets_saved[save_ind] = targets_i
-	                    states_saved[save_ind] = states_i
-	                    transients_saved[save_ind] = transient_i
-	                    save_ind += 1
-						
-                    if (SS_T is None):
-                        SS_T = features_i.T @ features_i
-                        VS_T = features_i.T @ targets_train_i
-                    else:
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_train_i
-          
-                    for t_batch_ind in range(1, num_t_batches):
-                        start_time = transient_i + t_batch_ind * t_batch_size
-						
-                        inputs_i = inputs[total_ind][start_time:
-													 start_time + t_batch_size]
-                        states_i = self.get_states(new_state, inputs_i)
-                        targets_i = target_outputs[total_ind][start_time:
-															  start_time + t_batch_size]
-						
-                        if (total_ind in accessible_drives):# and
-							#t_batch_ind in accessible_batches):
-                            inputs_saved[save_ind-1] = np.concatenate(
-								(inputs_saved[save_ind-1], inputs_i), axis = 0)
-                            targets_saved[save_ind-1] = np.concatenate(
-								(targets_saved[save_ind-1], targets_i), axis = 0)
-                            states_saved[save_ind-1] = np.concatenate(
-								(states_saved[save_ind-1], states_i), axis = 0)
-						
-                        new_state = states_i[-1]
-                        states_i = np.concatenate((lookback_states, states_i))
-                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
-                        lookback_inputs = inputs_i[-lookback_length-1:]
-                        lookback_states = states_i[-lookback_length-1:]
-              
-                        features_i = feature_function_jit(states_i[1:],
-														  inputs_i[1:])
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i
-          
-                    if (num_t_batches > 0 and remainder_length > 0):
-                        start_time = transient_i + num_batches * t_batch_size
-						
-                        inputs_i = inputs[total_ind][start_time:]
-                        states_i = self.get_states(new_state, inputs_i)
-                        targets_i = target_outputs[total_ind][start_time:]
-						
-                        if (total_ind in accessible_drives):# and
-							#num_t_batches in accessible_batches):
-                            inputs_saved[save_ind-1] = np.concatenate(
-								(inputs_saved[save_ind-1], inputs_i), axis = 0)
-                            targets_saved[save_ind-1] = np.concatenate(
-								(targets_saved[save_ind-1], targets_i), axis = 0)
-                            states_saved[save_ind-1] = np.concatenate(
-								(states_saved[save_ind-1], states_i), axis = 0)
-						
-                        new_state = states_i[-1]
-                        states_i = np.concatenate((lookback_states, states_i))
-                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
-                        lookback_inputs = inputs_i[-lookback_length-1:]
-                        lookback_states = states_i[-lookback_length-1:]
-						
-                        features_i = feature_function_jit(states_i[1:],
-														  inputs_i[1:])
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i
-		
+                        VS_T += features_i.T @ targets_i[lookback_length:]
+							              
+                        if (total_ind in accessible_drives and
+						   t_batch_ind + 1 in save_batches):
+                            inputs_saved.append(inputs_i[1:])
+                            targets_saved.append(targets_i)
+                            states_saved.append(states_i[1:])          
+        
         # If the regression function takes other arguments.
         else:
+			
+            # Ensure that neither batch_size or batch_length have been
+			# provided. If either has been provided, return an error message
+			# for user clarity,
+            if (batch_length is not None):
+                msg = "A batch_length is provided but the regression function " \
+					"does not allow for batched training. Please pass a " \
+					"regression function that allows batched training or " \
+					"ensure that batch_length is set to 'None' (or not provided)."
+                logging.error(msg)
+                raise(NotImplementedError(msg))
+            if (batch_size is not None):
+                msg = "A batch_size is provided but the regression function " \
+					"does not allow for batched training. Please pass a " \
+					"regression function that allows batched training or " \
+					"ensure that batch_size is set to 'None' (or not provided)."
+                logging.error(msg)
+                raise(NotImplementedError(msg))
+			
             for task_ind in range(num_samples):			
                 transient_i = transient_length[task_ind]
                 inputs_i = inputs[task_ind]
                 states_i = self.get_states(initial_state, inputs_i)
                 targets_i = target_outputs[task_ind]
-                features_i = feature_function(states_i[transient_i:],
-											  inputs_i[transient_i:])
+                features_i = feature_function_jit(states_i[transient_i:],
+												  inputs_i[transient_i:])
                 targets_train_i = targets_i[transient_i + lookback_length:]
                 if task_ind in accessible_drives:
-                    inputs_saved[save_ind] = inputs_i
-                    targets_saved[save_ind] = targets_i
-                    states_saved[save_ind] = states_i
-                    transients_saved[save_ind] = transient_i
-                    save_ind += 1
+                    inputs_saved.append(inputs_i)
+                    targets_saved.append(targets_i)
+                    states_saved.append(states_i)
+                    transients_saved.append(transient_i)
                 if features_train is None:
                     states_train = states_i
                     inputs_train = inputs_i
@@ -1358,10 +1326,9 @@ class ESN:
             train_result: The trained result object containing the output
                           weights, reservoir states, etc.
             predict_length: The length of time to predict.
-                            If predict_length is zero, no autonomous evolution
-							of the reservoir will be performed. Instead, 
-							external inputs are required to drive the reservoir
-							and perform a mapping to a single target vector.
+                            Used only in time-series prediction tasks, when the 
+							feature function is not a subclass of 
+							rescompy.features.SingleFeature.
             inputs: The external inputs to the ESN.
             target_outputs: The target outputs during the testing period.
                             This is needed to compute performance statistics in
@@ -1423,20 +1390,21 @@ class ESN:
             if len(resync_signal.shape) == 1:
                 resync_signal = resync_signal[:, None]
         
-        if (predict_length == 0 or
-			issubclass(type(feature_function), features.SingleFeature)):
+        if issubclass(type(feature_function), features.SingleFeature):
             predict_length = 0
             if target_outputs is not None:
                 utils.check_shape(target_outputs.shape, (1, None),
 								  'target_outputs')
             if inputs is None:
-                msg = "predict_length is zero but no inputs are provided."\
+                msg = "A SingleFeature feature_function, for mapping an input" \
+					  " signal to a single target, is provided without inputs." \
                       " Please provide a inputs to perform a mapping." 
                 logging.error(msg)
             if initial_state is None and resync_signal is None:
-                msg = "predict_length is zero but no initial state "\
-                      "or resync signal is provided. Prediction will start " \
-                      "from the final state of the provided train_result."
+                msg = "A SingleFeature feature_function, for mapping an input" \
+					  " signal to a single target, is provided but no initial" \
+                      " state or resync signal is given. Prediction will start" \
+                      " from the final state of the provided train_result."
                 logging.error(msg)
 		
         # Automatically set the predict length, if not provided.
@@ -1468,12 +1436,12 @@ class ESN:
         
         # Check if the feature function requires a lookback period to include
         # time-delayed states or inputs in feature vectors.
-        if hasattr(feature_function, 'inputs_lookback_length'):
+        if issubclass(type(feature_function), features.TimeDelayedFeature):
             inputs_lookback_length = feature_function.inputs_lookback_length
-        else: inputs_lookback_length = 0
-        if hasattr(feature_function, 'states_lookback_length'):
             states_lookback_length = feature_function.states_lookback_length
-        else: states_lookback_length = 0
+        else:
+            inputs_lookback_length = 0
+            states_lookback_length = 0
         
         if lookback_states is not None:
             utils.check_shape(lookback_states.shape, (None, self.size),
