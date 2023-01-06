@@ -1124,6 +1124,11 @@ class ESN:
                                  resync_signal, resync_states, resync_outputs)
     
     
+class ParallelESN1D: pass
+class ParallelESN2D: pass
+class ParallelESNNetwork: pass
+
+    
 class ParallelESN(ESN):
     
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
@@ -1131,7 +1136,9 @@ class ParallelESN(ESN):
         self,
         num_esn:         int,
         input_dimension: int,
+        # inputs per reservior
         size:            int                         = 100,
+        # size per reservoir
         connections:     float                       = 10.0,
         spectral_radius: float                       = 0.99,
         input_strength:  float                       = 1.0,
