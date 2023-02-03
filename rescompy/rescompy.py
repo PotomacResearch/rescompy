@@ -1092,9 +1092,12 @@ class ESN:
             utils.check_shape(inputs[task_ind].shape,
                           (None, self.input_dimension), msg1)
 		
-        # If the feature_function has a compiled option, use it. Otherwise
-		# use the non-compiled version.
-        if hasattr(feature_function, 'compiled'):
+        # If the feature_function is of type SingleFeature and has a compiled 
+		# option, use it. Otherwise use the non-compiled version. Single-target
+		# mapping tasks are likely to require a large number of training,
+		# so that compilation could be advantageous.  
+        if hasattr(feature_function, 'compiled') and \
+			issubclass(type(feature_function), features.SingleFeature):
 	            feature_function_jit = feature_function.compiled
         else: feature_function_jit = feature_function
 		
