@@ -1036,7 +1036,8 @@ class ESN:
         # If there are any negative indices in accessible_drives, replace them
 		# with their equivalent positive index for downstream clarity.
         for index, entry in enumerate(accessible_drives):
-            if entry < 0: accessible_drives[index] = len(inputs) + entry
+            if entry < 0:
+                accessible_drives[index] = len(inputs) + entry
     
         # Confirm that the same number of inputs and target_outputs are
         # provided.
@@ -1046,14 +1047,14 @@ class ESN:
 			
         # Confirm that the same number of inputs and transients are
         # provided.
-        if len(transient_length) == 1: transient_length = transient_length * len(inputs)
+        if len(transient_length) == 1:
+            transient_length = transient_length * len(inputs)
         elif len(transient_length) != len(inputs): 
             msg = "len(transient_lengths) must be one or match len(inputs)."
             logging.error(msg)
         
-        num_samples = len(inputs)
         # Shape inputs and target_outputs, if necessary.
-        for inputs_ind in range(num_samples):
+        for inputs_ind in range(len(inputs)):
             if len(inputs[inputs_ind].shape) == 1:
                 inputs[inputs_ind] = inputs[inputs_ind][:, None]
         for target_outputs_ind in range(len(target_outputs)):
@@ -1061,12 +1062,6 @@ class ESN:
                 if len(target_outputs[target_outputs_ind].shape) == 1:
                     target_outputs[target_outputs_ind] = \
                         target_outputs[target_outputs_ind][:, None]
-        
-        # Check if the feature function requires a lookback period to include
-        # time-delayed states or inputs in feature vectors.
-        if issubclass(type(feature_function), features.TimeDelayedFeature):
-            lookback_length = feature_function.lookback_length
-        else: lookback_length = 0
         
         # If no targets are provided, assume we are trying to predict the
         # inputs.
@@ -1087,8 +1082,10 @@ class ESN:
 		
         # Check for the appropriate shapes.
         for task_ind in range(len(inputs)):
-            if len(inputs) == 1: msg1 = 'inputs'
-            else: msg1 = f'inputs[{task_ind}]'
+            if len(inputs) == 1:
+                msg1 = 'inputs'
+            else:
+                msg1 = f'inputs[{task_ind}]'
             utils.check_shape(inputs[task_ind].shape,
                           (None, self.input_dimension), msg1)
 		
@@ -1099,7 +1096,8 @@ class ESN:
         if hasattr(feature_function, 'compiled') and \
 			issubclass(type(feature_function), features.SingleFeature):
 	            feature_function_jit = feature_function.compiled
-        else: feature_function_jit = feature_function
+        else:
+            feature_function_jit = feature_function
 		
         # use the signature of the regression to figure out the parameters
         regression_params = inspect.signature(regression).parameters
@@ -1110,11 +1108,6 @@ class ESN:
         targets_train = None
         SS_T = None
         VS_T = None
-		
-        targets_saved = []
-        inputs_saved = []
-        states_saved = []
-        transients_saved = []
 
         # Get the propagated reservoir states.
 		
@@ -1133,102 +1126,20 @@ class ESN:
 					" batches with a fixed number of input signals."
                 logging.error(msg)
                 raise(NotImplementedError(msg))
-			
-            if (batch_size is None): batch_size = num_samples
-            batch_size = min(num_samples, batch_size)
-            num_batches = num_samples // batch_size
-            num_remainders = num_samples % batch_size
-            
-            # If the training task requires that each input signal yields a 
-			# single feature vector, or no batch_length is provided, ensure
-			# that batch_length is greater than the longest training signal.
-			# This ensures that the feature function is called at the end of
-			# each input signal only.
-            if (issubclass(type(feature_function), features.SingleFeature) or
-				batch_length is None):
-                batch_length = max([inputs[ind].shape[0]
-									for ind in range(num_samples)])
-			
-            # Store the number of sample inputs to be processed in 
-			# each batch, accounting for remainders
-            batch_sizes = [batch_size] * num_batches 
-            if num_remainders > 0: batch_sizes.append(num_remainders)
-			
-            for batch_ind in range(len(batch_sizes)):
-                for task_ind in range(batch_sizes[batch_ind]):
-                    total_ind = batch_ind * batch_size + task_ind
 
-                    task_inputs = inputs[total_ind]
-                    task_targets = target_outputs[total_ind]
-                    transient_i = transient_length[total_ind]
-
-                    t_batch_size = min(batch_length, task_inputs.shape[0] - transient_i)
-                    num_t_batches = (task_inputs.shape[0] - transient_i) // t_batch_size
-                    remainder_length = (task_inputs.shape[0] - transient_i) % t_batch_size
-					
-                    if accessible_batches == "both":
-                        save_batches = [0, num_t_batches - 1, num_t_batches]
-                    elif accessible_batches == "final":
-                        save_batches = [num_t_batches - 1, num_t_batches]
-                    elif accessible_batches == "first":
-                        save_batches = [0]
-					
-                    inputs_i = task_inputs[:transient_i + t_batch_size]
-                    states_i = self.get_states(initial_state, inputs_i)
-                    targets_i = task_targets[: transient_i + t_batch_size]
-
-                    features_i = feature_function_jit(states_i[transient_i:],
-													  inputs_i[transient_i:])
-					    
-                    if (SS_T is None):
-                        SS_T = features_i.T @ features_i
-                        VS_T = features_i.T @ targets_i[transient_i + lookback_length:]
-                    else:
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i[transient_i + lookback_length:]
-					
-                    if total_ind in accessible_drives:
-                        transients_saved.append(transient_i)
-                        if 0 in save_batches:
-	                        inputs_saved.append(inputs_i)
-	                        targets_saved.append(targets_i)
-	                        states_saved.append(states_i)
-
-                    time_batched_data = []
-                    for t_batch_ind in range(1, num_t_batches):
-                        start_time = transient_i + t_batch_ind * t_batch_size
-                        time_batched_data.append(zip(
-							[task_inputs[start_time: start_time + t_batch_size]],
-							[task_targets[start_time - lookback_length:
-										 start_time + t_batch_size]]))
-                    if (num_t_batches > 0 and remainder_length > 0):
-                        start_time = transient_i + num_t_batches * t_batch_size
-                        time_batched_data.append(zip([task_inputs[start_time:]],
-							[task_targets[start_time - lookback_length: ]]))
-
-                    for t_batch_ind, batch_data in enumerate(time_batched_data):
-						
-                        new_state = states_i[-1]
-                        lookback_inputs = inputs_i[-lookback_length-1:]
-                        lookback_states = states_i[-lookback_length-1:]
-						
-                        data = list(zip(*batch_data))
-                        inputs_i = data[0][0]
-                        targets_i = data[1][0]
-                        states_i = np.concatenate(
-							(lookback_states, self.get_states(new_state, inputs_i)))
-                        inputs_i = np.concatenate((lookback_inputs, inputs_i))
-
-                        features_i = feature_function_jit(states_i[1:],
-														  inputs_i[1:])
-                        SS_T += features_i.T @ features_i
-                        VS_T += features_i.T @ targets_i[lookback_length:]
-							              
-                        if (total_ind in accessible_drives and
-						   t_batch_ind + 1 in save_batches):
-                            inputs_saved.append(inputs_i[1:])
-                            targets_saved.append(targets_i)
-                            states_saved.append(states_i[1:])          
+            saved_data, SS_T, VS_T = _train_with_batching(
+                esn = self,
+                transient_length = transient_length,
+                initial_state = initial_state,
+                inputs = inputs,
+                target_outputs = target_outputs,
+                feature_function = feature_function_jit,
+                batch_size = batch_size,
+                batch_length = batch_length,
+                accessible_drives = accessible_drives,
+                accessible_batches = accessible_batches
+                )
+            inputs_saved, targets_saved, states_saved, transients_saved = _unzip_lists(saved_data)
         
         # If the regression function takes other arguments.
         else:
@@ -1251,31 +1162,18 @@ class ESN:
                 logging.error(msg)
                 raise(NotImplementedError(msg))
 			
-            for task_ind in range(num_samples):			
-                transient_i = transient_length[task_ind]
-                inputs_i = inputs[task_ind]
-                states_i = self.get_states(initial_state, inputs_i)
-                targets_i = target_outputs[task_ind]
-                features_i = feature_function_jit(states_i[transient_i:],
-												  inputs_i[transient_i:])
-                targets_train_i = targets_i[transient_i + lookback_length:]
-                if task_ind in accessible_drives:
-                    inputs_saved.append(inputs_i)
-                    targets_saved.append(targets_i)
-                    states_saved.append(states_i)
-                    transients_saved.append(transient_i)
-                if features_train is None:
-                    states_train = states_i
-                    inputs_train = inputs_i
-                    features_train = features_i
-                    targets_train = targets_train_i
-                else:
-                    states_train = np.concatenate((states_train, states_i))
-                    inputs_train = np.concatenate((inputs_train, inputs_i))
-                    features_train = np.concatenate((features_train,
-													 features_i))
-                    targets_train = np.concatenate((targets_train,
-													targets_train_i))
+            saved_data, train_data = _train_without_batching(
+                esn = self,
+                transient_length = transient_length,
+                initial_state = initial_state,
+                inputs = inputs,
+                target_outputs = target_outputs,
+                feature_function = feature_function_jit,
+                accessible_drives = accessible_drives,
+                )
+            
+            inputs_saved, targets_saved, states_saved, transients_saved = _unzip_lists(saved_data)
+            inputs_train, targets_train, states_train, features_train = _unzip_lists(train_data)
         
         # assume u = input, s = feature, v = target, g is the feature function
         map = {
@@ -1305,8 +1203,8 @@ class ESN:
         
         # Construct and return the training result.
         return TrainResult(states_saved, inputs_saved, targets_saved,
-						   transients_saved, accessible_drives,
-						   feature_function, weights,
+                           transients_saved, accessible_drives,
+                           feature_function, weights,
 						   jacobian=args.get('dg_du', None))
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))        
@@ -1499,7 +1397,8 @@ class ESN:
             # This will only cause an issue if the feature function needs an
             # input.
             # Shape the initial_state if provided as a 1D array.
-            if len(initial_state.shape) == 1: initial_state = initial_state[None]
+            if len(initial_state.shape) == 1:
+                initial_state = initial_state[None]
             if (lookback_states is not None):
                 lookback_states[-1] = initial_state[0]
             else: lookback_states = initial_state
@@ -1988,6 +1887,7 @@ _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states
 
 
 def _calc_D(states_train, inputs_train, size, A, B, C):
+    
     initial_state = states_train[0,:]
 
     # calculate D, which is f'(a) where a is the activation at each node
@@ -2013,3 +1913,273 @@ def _calc_dr_du(states_train, inputs_train, size,
     for i in range(num_timesteps):
         dr_du[i,:,:] = leaking_rate*(D[i,:] * B.T).T
     return dr_du
+
+def _train_without_batching(
+        esn:                ESN,
+        transient_length:   list,
+        initial_state:      np.ndarray,
+        inputs:             list,
+        target_outputs:     list,
+        feature_function:   Union[Callable, features.ESNFeatureBase],
+        accessible_drives:  List[int]
+        ):
+    
+    """ The batchless training function.
+    
+    A function to train ESN with the provided inputs and target outputs.
+    
+    This function is intended for internal use and does not provide type- or
+    shape-checking.
+    
+    Args:
+        esn (ESN): The echo state network.
+        transient_length (list): The transient lengths.
+        initial_state (np.ndarray): The initial reservoir state.
+		inputs (list): The reservoir inputs.
+        target_outputs (list): The target outputs.
+        feature_function (Callable): The feature_function.
+        batch_size: The number of input signals to process before each 
+                    update to the regression matrices SS_T and VS_T.
+        batch_length: The number of time steps to process before each update to
+                    the regression matrices SS_T and VS_T.
+        accessible_drives (list): The training signals whose associated states
+                    and inputs objects will be available in the returned
+                    TrainResult object.
+        accessible_batches (str): The batches from each input signal whose
+                    associated states and inputs objects will be
+                    available in the returned TrainResult object.
+    
+    Returns:
+        saved_data (zip object): A zip object containing the inputs,
+            target outputs, reservoir states, and transient lengths to be 
+            saved in the final TrainResult object.
+        train_data (zip object): A zip object containing the inputs,
+            target outputs, reservoir states, and feature vectors to be 
+            to used in the regression step of training.
+    
+    """
+    
+    inputs_saved = []
+    targets_saved = []
+    states_saved = []
+    transients_saved = []
+    features_train = None
+    
+    # Check if the feature function requires a lookback period to include
+    # time-delayed states or inputs in feature vectors.
+    if issubclass(type(feature_function), features.TimeDelayedFeature):
+        lookback_length = feature_function.lookback_length
+    else:
+        lookback_length = 0
+    
+    for task_ind in range(len(inputs)):			
+        transient_i = transient_length[task_ind]
+        inputs_i = inputs[task_ind]
+        states_i = esn.get_states(initial_state, inputs_i)
+        targets_i = target_outputs[task_ind]
+        features_i = feature_function(states_i[transient_i:],
+				  inputs_i[transient_i:])
+        targets_train_i = targets_i[transient_i + lookback_length:]
+        if task_ind in accessible_drives:
+            inputs_saved.append(inputs_i)
+            targets_saved.append(targets_i)
+            states_saved.append(states_i)
+            transients_saved.append(transient_i)
+        if features_train is None:
+            states_train = states_i
+            inputs_train = inputs_i
+            features_train = features_i
+            targets_train = targets_train_i
+        else:
+            states_train = np.concatenate((states_train, states_i))
+            inputs_train = np.concatenate((inputs_train, inputs_i))
+            features_train = np.concatenate((features_train,
+					 features_i))
+            targets_train = np.concatenate((targets_train,
+					targets_train_i))
+    
+    saved_data = zip([inputs_saved], [targets_saved], [states_saved], [transients_saved])
+    train_data = zip([inputs_train], [targets_train], [states_train], [features_train])
+    
+    return saved_data, train_data
+
+def _train_with_batching(
+        esn:                ESN,
+        transient_length:   list,
+        initial_state:      np.ndarray,
+        inputs:             list,
+        target_outputs:     list,
+        feature_function:   Union[Callable, features.ESNFeatureBase],
+        batch_size:         Union[int, None],
+        batch_length:       Union[int, None],
+        accessible_drives:  List[int],
+        accessible_batches: str
+        ):
+    
+    """ The batched training function.
+    
+    A to create batches of inputs and target_outputs and then train an ESN on 
+    these batches.
+    
+    This function is intended for internal use and does not provide type- or
+    shape-checking.
+    
+    Args:
+        esn (ESN): The echo state network.
+        transient_length (list): The transient lengths.
+        initial_state (np.ndarray): The initial reservoir state.
+		inputs (list): The reservoir inputs.
+        target_outputs (list): The target outputs.
+        feature_function (Callable): The feature_function.
+        batch_size: The number of input signals to process before each 
+                    update to the regression matrices SS_T and VS_T.
+        batch_length: The number of time steps to process before each update to
+                    the regression matrices SS_T and VS_T.
+        accessible_drives (list): The training signals whose associated states
+                    and inputs objects will be available in the returned
+                    TrainResult object.
+        accessible_batches (str): The batches from each input signal whose
+                    associated states and inputs objects will be
+                    available in the returned TrainResult object.
+    
+    Returns:
+        saved_data (zip object): A zip object containing the inputs,
+            target outputs, and reservoir states to be saved in the final
+            TrainResult object.
+        transients_saved (list): A list containing the transient lengths to be 
+            saved in the final TrainResult object.
+        SS_T (np.ndarray): The regression matrix SS_T.
+        VS_T (np.ndarray): The regression matrix VS_T.
+    
+    """
+    
+    num_samples = len(inputs)
+    if (batch_size is None):
+        batch_size = num_samples
+    batch_size = min(num_samples, batch_size)
+    num_batches = num_samples // batch_size
+    num_remainders = num_samples % batch_size
+            
+    # If the training task requires that each input signal yields a
+    # single feature vector, or no batch_length is provided, ensure
+    # that batch_length is greater than the longest training signal.
+    # This ensures that the feature function is called at the end of
+    # each input signal only.
+    if (issubclass(type(feature_function), features.SingleFeature) or
+        batch_length is None):
+        batch_length = max([inputs[ind].shape[0] for ind in range(num_samples)])
+			
+    # Store the number of sample inputs to be processed in 
+	# each batch, accounting for remainders
+    batch_sizes = [batch_size] * num_batches 
+    if num_remainders > 0:
+        batch_sizes.append(num_remainders)
+        
+    # Check if the feature function requires a lookback period to include
+    # time-delayed states or inputs in feature vectors.
+    if issubclass(type(feature_function), features.TimeDelayedFeature):
+        lookback_length = feature_function.lookback_length
+    else:
+        lookback_length = 0
+        
+    inputs_saved = []
+    targets_saved = []
+    states_saved = []
+    transients_saved = []
+    SS_T = None
+    VS_T = None
+			
+    for batch_ind in range(len(batch_sizes)):
+        for task_ind in range(batch_sizes[batch_ind]):
+            total_ind = batch_ind * batch_size + task_ind
+
+            task_inputs = inputs[total_ind]
+            task_targets = target_outputs[total_ind]
+            transient_i = transient_length[total_ind]
+
+            t_batch_size = min(batch_length, task_inputs.shape[0] - transient_i)
+            num_t_batches = (task_inputs.shape[0] - transient_i) // t_batch_size
+            remainder_length = (task_inputs.shape[0] - transient_i) % t_batch_size
+					
+            if accessible_batches == "both":
+                save_batches = [0, num_t_batches - 1, num_t_batches]
+            elif accessible_batches == "final":
+                save_batches = [num_t_batches - 1, num_t_batches]
+            elif accessible_batches == "first":
+                save_batches = [0]
+					
+            inputs_i = task_inputs[:transient_i + t_batch_size]
+            states_i = esn.get_states(initial_state, inputs_i)
+            targets_i = task_targets[: transient_i + t_batch_size]
+
+            features_i = feature_function(states_i[transient_i:],
+                                              inputs_i[transient_i:])
+					    
+            if (SS_T is None):
+                SS_T = features_i.T @ features_i
+                VS_T = features_i.T @ targets_i[transient_i + lookback_length:]
+            else:
+                SS_T += features_i.T @ features_i
+                VS_T += features_i.T @ targets_i[transient_i + lookback_length:]
+					
+            if total_ind in accessible_drives:
+                transients_saved.append(transient_i)
+                if 0 in save_batches:
+                    inputs_saved.append(inputs_i)
+                    targets_saved.append(targets_i)
+                    states_saved.append(states_i)
+
+            time_batched_data = []
+            for t_batch_ind in range(1, num_t_batches):
+                start_time = transient_i + t_batch_ind * t_batch_size
+                time_batched_data.append(zip(
+                    [task_inputs[start_time: start_time + t_batch_size]],
+                    [task_targets[start_time - lookback_length:
+                                  start_time + t_batch_size]]))
+                if (num_t_batches > 0 and remainder_length > 0):
+                    start_time = transient_i + num_t_batches * t_batch_size
+                    time_batched_data.append(zip([task_inputs[start_time:]],
+                                                 [task_targets[start_time - lookback_length: ]]))
+
+            for t_batch_ind, batch_data in enumerate(time_batched_data):
+				
+                new_state = states_i[-1]
+                lookback_inputs = inputs_i[-lookback_length-1:]
+                lookback_states = states_i[-lookback_length-1:]
+                
+                inputs_i, targets_i = _unzip_lists(batch_data)
+                states_i = np.concatenate(
+                    (lookback_states, esn.get_states(new_state, inputs_i)))
+                inputs_i = np.concatenate((lookback_inputs, inputs_i))
+
+                features_i = feature_function(states_i[1:], inputs_i[1:])
+                SS_T += features_i.T @ features_i
+                VS_T += features_i.T @ targets_i[lookback_length:]
+							              
+                if (total_ind in accessible_drives and t_batch_ind + 1 in save_batches):
+                    inputs_saved.append(inputs_i[1:])
+                    targets_saved.append(targets_i)
+                    states_saved.append(states_i[1:])
+    
+    saved_data = zip([inputs_saved], [targets_saved], [states_saved], [transients_saved])
+    
+    return saved_data, SS_T, VS_T
+
+def _unzip_lists(
+        zip_object:     zip
+        ):
+    
+    """
+    A function to recover a collection of lists which have zipped together.
+    
+    Intended for internal use only.
+    
+    Returns:
+        items (list): A list of items extracted from the zip object.
+    """
+    
+    items = list(zip(*zip_object))
+    for index in range(len(items)):
+        items[index] = items[index][0]
+        
+    return items
