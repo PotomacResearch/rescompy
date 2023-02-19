@@ -16,7 +16,6 @@ __version__ = '1.0.0'
 
 import numba
 import numpy as np
-from pydantic import validate_arguments
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
