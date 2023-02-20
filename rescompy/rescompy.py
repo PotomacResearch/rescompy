@@ -1146,7 +1146,7 @@ class ESN:
 			
             # Ensure that neither batch_size or batch_length have been
 			# provided. If either has been provided, return an error message
-			# for user clarity,
+			# for user clarity.
             if (batch_length is not None):
                 msg = "A batch_length is provided but the regression function " \
 					"does not allow for batched training. Please pass a " \
@@ -1945,9 +1945,6 @@ def _train_without_batching(
         accessible_drives (list): The training signals whose associated states
                     and inputs objects will be available in the returned
                     TrainResult object.
-        accessible_batches (str): The batches from each input signal whose
-                    associated states and inputs objects will be
-                    available in the returned TrainResult object.
     
     Returns:
         saved_data (zip object): A zip object containing the inputs,
