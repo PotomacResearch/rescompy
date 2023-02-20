@@ -2170,7 +2170,7 @@ def _unzip_lists(
         ):
     
     """
-    A function to recover a collection of lists which have zipped together.
+    A function to recover a collection of lists which have been zipped together.
     
     Intended for internal use only.
     
