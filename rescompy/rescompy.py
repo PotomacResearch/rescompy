@@ -1434,6 +1434,9 @@ class ESN:
         if predict_length == 0:
             states = self.get_states(initial_state.reshape((-1,)), inputs)
             outputs = feature_function(states, inputs) @ weights
+            
+            return PredictResult(inputs, outputs, states, predict_length,
+                                 target_outputs, None, None, None)
                 
         else:
             # If inputs aren't provided, just allocate space for them.
@@ -1512,10 +1515,10 @@ class ESN:
                               weights, self.leaking_rate)
         
         if resync_signal is None:
-            return PredictResult(inputs, outputs, states, predict_length,
+            return PredictResult(inputs, outputs[1:], states[1:], predict_length,
 								 target_outputs, None, None, None)
         else:
-            return PredictResult(inputs, outputs, states, predict_length,
+            return PredictResult(inputs, outputs[:-1], states[:-1], predict_length,
 								 target_outputs, resync_signal, resync_states,
 								 resync_outputs)
 		
@@ -1881,7 +1884,7 @@ def _get_states_autonomous(
 		 np.reshape(f[i+1-diff-inputs_lookback: i+2-diff],
 		   (inputs_lookback+1,-1))
 		 ) @ W
-    return r[states_lookback+1:], v[1:]
+    return r[states_lookback:], v
 
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
 
