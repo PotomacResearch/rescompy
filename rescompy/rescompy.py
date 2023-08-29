@@ -807,6 +807,7 @@ class ESN:
         utils.check_range(value, 'spectral_radius', 0.0, 'g', True)
         utils.check_range(value, 'spectral_radius', 1.0, 'l', False)
         self.A *= value/self._spectral_radius
+        self._spectral_radius = abs(value)
         
     @spectral_radius.deleter
     def spectral_radius(self):
@@ -821,6 +822,7 @@ class ESN:
     def input_strength(self, value: float):
         utils.check_range(value, 'input_strength', 0.0, 'g', True)
         self.B *= value/self._input_strength
+        self._input_strength = abs(value)
         
     @input_strength.deleter
     def input_strength(self):
@@ -835,6 +837,7 @@ class ESN:
     def bias_strength(self, value: float):
         utils.check_range(value, 'bias_strength', 0.0, 'geq', True)
         self.C *= value/self._bias_strength
+        self._bias_strength = abs(value)
         
     @bias_strength.deleter
     def bias_strength(self):
@@ -1146,7 +1149,7 @@ class ESN:
 			
             # Ensure that neither batch_size or batch_length have been
 			# provided. If either has been provided, return an error message
-			# for user clarity,
+			# for user clarity.
             if (batch_length is not None):
                 msg = "A batch_length is provided but the regression function " \
 					"does not allow for batched training. Please pass a " \
@@ -1434,6 +1437,9 @@ class ESN:
         if predict_length == 0:
             states = self.get_states(initial_state.reshape((-1,)), inputs)
             outputs = feature_function(states, inputs) @ weights
+            
+            return PredictResult(inputs, outputs, states, predict_length,
+                                 target_outputs, None, None, None)
                 
         else:
             # If inputs aren't provided, just allocate space for them.
@@ -1512,10 +1518,10 @@ class ESN:
                               weights, self.leaking_rate)
         
         if resync_signal is None:
-            return PredictResult(inputs, outputs, states, predict_length,
+            return PredictResult(inputs, outputs[1:], states[1:], predict_length,
 								 target_outputs, None, None, None)
         else:
-            return PredictResult(inputs, outputs, states, predict_length,
+            return PredictResult(inputs, outputs[:-1], states[:-1], predict_length,
 								 target_outputs, resync_signal, resync_states,
 								 resync_outputs)
 		
@@ -1578,14 +1584,6 @@ def optimize_hyperparameters(
     # Copy the referenced ESN.
     base_esn = copy(esn)
     
-    # Normalize the spectral radius, input strength, and bias strength.
-    v0 = rng.random(base_esn.size)
-    eigenvalues, _ = splinalg.eigs(base_esn.A, k=1, v0=v0)
-    base_esn.A *= 1/np.abs(eigenvalues[0])
-    base_esn.B *= 1/np.max(np.abs(base_esn.B))
-    if np.max(np.abs(base_esn.C)) != 0:
-        base_esn.C *= 1/np.max(np.abs(base_esn.C))
-    
     if verbose:
         header = f"{'spectral_radius':15s} | {'input_strength':15s} " \
                  f"| {'bias_strength':15s} | {'leaking_rate':15s} " \
@@ -1600,13 +1598,13 @@ def optimize_hyperparameters(
         
         # Adjust the hyperparameters.
         if allow_matrix_flip:
-            new_esn.A *= x[0]
-            new_esn.B *= x[1]
-            new_esn.C *= x[2]
+            new_esn.spectral_radius = x[0]
+            new_esn.input_strength = x[1]
+            new_esn.bias_strength = x[2]
         else:
-            new_esn.A *= np.abs(x[0])
-            new_esn.B *= np.abs(x[1])
-            new_esn.C *= np.abs(x[2])
+            new_esn.spectral_radius = np.abs(x[0])
+            new_esn.input_strength = np.abs(x[1])
+            new_esn.bias_strength = np.abs(x[2])
         if allow_negative_leak:
             new_esn.leaking_rate = x[3]
         else:
@@ -1633,9 +1631,8 @@ def optimize_hyperparameters(
     
     # Return an ESN with the optimal hyperparameters.
     new_esn = copy(base_esn)
-    new_esn.A *= result[0]
-    new_esn.B *= result[1]
-    new_esn.C *= result[2]
+    new_esn.spectral_radius = np.abs(result[0])
+    new_esn.input_strength = np.abs(result[1])
     new_esn.bias_strength = np.abs(result[2])
     new_esn.leaking_rate = result[3]
     
@@ -1881,7 +1878,7 @@ def _get_states_autonomous(
 		 np.reshape(f[i+1-diff-inputs_lookback: i+2-diff],
 		   (inputs_lookback+1,-1))
 		 ) @ W
-    return r[states_lookback+1:], v[1:]
+    return r[states_lookback:], v
 
 _get_states_autonomous_jit = numba.jit(nopython=True, fastmath=True)(_get_states_autonomous)
 
@@ -1945,9 +1942,6 @@ def _train_without_batching(
         accessible_drives (list): The training signals whose associated states
                     and inputs objects will be available in the returned
                     TrainResult object.
-        accessible_batches (str): The batches from each input signal whose
-                    associated states and inputs objects will be
-                    available in the returned TrainResult object.
     
     Returns:
         saved_data (zip object): A zip object containing the inputs,
@@ -2170,7 +2164,7 @@ def _unzip_lists(
         ):
     
     """
-    A function to recover a collection of lists which have zipped together.
+    A function to recover a collection of lists which have been zipped together.
     
     Intended for internal use only.
     
