@@ -2130,10 +2130,10 @@ def _train_with_batching(
                     [task_inputs[start_time: start_time + t_batch_size]],
                     [task_targets[start_time - lookback_length:
                                   start_time + t_batch_size]]))
-                if (num_t_batches > 0 and remainder_length > 0):
-                    start_time = transient_i + num_t_batches * t_batch_size
-                    time_batched_data.append(zip([task_inputs[start_time:]],
-                                                 [task_targets[start_time - lookback_length: ]]))
+            if (num_t_batches > 0 and remainder_length > 0):
+                start_time = transient_i + num_t_batches * t_batch_size
+                time_batched_data.append(zip([task_inputs[start_time:]],
+                                             [task_targets[start_time - lookback_length: ]]))
 
             for t_batch_ind, batch_data in enumerate(time_batched_data):
 				
